@@ -43,6 +43,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] after success: caches dropped, `refresh` panels (default: own panel) and content re-run
 - [x] hint bar (fits the width, `? more`) and `?` help overlay (reusable `overlay`)
 - [ ] later: full action output in a popup (`o`), multi-select / bulk actions, a spinner for running actions
+## Marked rows ✅
+- [x] `mark: .path` (truthy row value) or `mark: {source, match}` (match value in the command's output lines)
+- [x] `*` gutter + accent colour; cursor starts on the first marked row until the user moves
+- [x] mark command runs with its panel (refresh, actions), cached with rows; failure = no marks
+- [ ] later: manual marks / multi-select (with bulk actions)
+
 ## Enter on a row — popup or drill-down
 Each panel can bind Enter to one of two behaviours. Esc always goes back one level.
 - [ ] **drill-down** (lazygit-style): Enter replaces the panel's contents with its `children` panel

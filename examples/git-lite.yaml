@@ -9,6 +9,7 @@ panels:
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
+    mark: {source: git branch --show-current}           # * on the checked-out branch; cursor starts there
     actions:                                           # while Branches is focused
       - {key: space, desc: Checkout, cmd: "git checkout {{.line}}", refresh: [status, branches, commits]}
       - {key: n, desc: New branch, prompt: Name, cmd: "git checkout -b {{input}}", refresh: [status, branches]}

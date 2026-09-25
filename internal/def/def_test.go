@@ -174,6 +174,13 @@ func TestValidationErrors(t *testing.T) {
 		{"ref to content panel", "panels:\n  - {id: m, content: {default: {tabs: [{name: n, cmd: c}]}}}\n  - {id: a, source: 'x {{m.y}}'}", "m is a content panel and has no rows"},
 		{"default id reserved", "panels:\n  - {id: default, source: x}", "panel default: id is reserved"},
 		{"old detail key", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c}]}", "t.yaml:2: detail: was replaced by content panels"},
+		{"mark bad path", "panels:\n  - id: a\n    source: x\n    mark: current", "t.yaml:4: panel a: mark: must be a row path like .current or {source: ..., match: ...}"},
+		{"mark no source", "panels:\n  - id: a\n    source: x\n    mark: {match: '{{.line}}'}", "panel a: mark: source is required"},
+		{"mark unknown field", "panels:\n  - id: a\n    source: x\n    mark: {source: y, when: z}", "t.yaml:4: panel a: mark: unknown field \"when\""},
+		{"mark source row ref", "panels:\n  - id: a\n    source: x\n    mark: {source: 'y {{.line}}'}", "{{.line}} in source"},
+		{"mark source self", "panels:\n  - id: a\n    source: x\n    mark: {source: 'y {{a.line}}'}", "references itself"},
+		{"mark bad match", "panels:\n  - id: a\n    source: x\n    mark: {source: y, match: '{{.x'}", "panel a: mark: match: unclosed"},
+		{"mark on content", "panels:\n  - {id: a, source: x}\n  - {id: m, mark: .x, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: mark only applies to list panels"},
 		{"bad side", "panels:\n  - {id: a, source: x, side: middle}", "side must be left, center or right"},
 		{"old actions map", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c}]", "t.yaml:2: actions: panel actions now live in the panel"},
 		{"action no key", "panels:\n  - id: a\n    source: x\n    actions: [{cmd: c}]", "panel a: action: key is required"},
@@ -438,5 +445,42 @@ panels:
 	acts := d.Panel("a").Actions
 	if len(acts) != 2 || acts[0].Key != "space" || acts[1].Mode != "interactive" || !acts[1].Confirm {
 		t.Errorf("panel actions = %+v", acts)
+	}
+}
+
+func TestMark(t *testing.T) {
+	src := `
+panels:
+  - {id: z, source: x}
+  - id: a
+    source: x
+    mark: .current
+  - id: b
+    source: x
+    key: .fields.0
+    mark: {source: "git branch --show-current {{a.name}}"}
+  - id: c
+    source: x
+    mark: {source: y, match: "{{.fields.1}}"}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := d.Panel("a").Mark; m == nil || !reflect.DeepEqual(m.Path, []string{"current"}) || m.Source != nil {
+		t.Errorf("path mark = %+v", m)
+	}
+	b := d.Panel("b")
+	if b.Mark == nil || b.Mark.Source.Source() != "git branch --show-current {{a.name}}" || b.Mark.Match != nil {
+		t.Errorf("command mark = %+v", b.Mark)
+	}
+	if !reflect.DeepEqual(b.Deps, []string{"a"}) {
+		t.Errorf("mark source deps should join the panel's: %v", b.Deps)
+	}
+	if m := d.Panel("c").Mark; m.Match == nil || m.Match.Source() != "{{.fields.1}}" {
+		t.Errorf("match = %+v", m)
+	}
+	if d.Panel("z").Mark != nil {
+		t.Error("panel without mark has one")
 	}
 }

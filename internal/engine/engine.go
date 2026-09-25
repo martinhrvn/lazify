@@ -27,6 +27,7 @@ type Run struct {
 	ID     uint64
 	Panel  string // the panel it is for (list or content panel)
 	Stream bool   // long-running: use Runner.Stream and report chunks via StreamData
+	Mark   bool   // the panel's mark command (see Panel.Mark)
 	Req    runner.Request
 }
 
@@ -49,6 +50,8 @@ type PanelView struct {
 	Stale   bool   // rows shown are not (yet) for the current selection
 	Err     string // last run's error
 	Blocked string // why the panel cannot run
+	Marked  []bool // per row, when the panel has a mark
+	MarkErr string // why the mark command failed
 }
 
 type panelState struct {
@@ -62,6 +65,13 @@ type panelState struct {
 	stale   bool
 	err     string
 	blocked string
+
+	marks      map[string]bool // output lines of the mark command
+	markErr    string
+	markRunID  uint64
+	markRunCmd string
+	moved      bool // the user moved the cursor here
+	jumped     bool // the cursor already went to the marked row once
 }
 
 // Engine holds the app state for one definition.
@@ -73,11 +83,12 @@ type Engine struct {
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
 	cache    map[string][]rows.Row
-	views    map[string]*viewState // per content panel
-	tabIdx   map[string]int        // active tab per (content panel, entry)
-	active   string                // last focused list panel: what content panels show
-	dcache   map[string][]string   // once-tab output by rendered command
-	focus    int                   // index into TopLevel()
+	views    map[string]*viewState      // per content panel
+	tabIdx   map[string]int             // active tab per (content panel, entry)
+	active   string                     // last focused list panel: what content panels show
+	dcache   map[string][]string        // once-tab output by rendered command
+	mcache   map[string]map[string]bool // mark command output by rendered command
+	focus    int                        // index into TopLevel()
 	nextID   uint64
 	settleID uint64
 	fx       Effects // accumulated by the current call
@@ -92,6 +103,7 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 		cache:  map[string][]rows.Row{},
 		tabIdx: map[string]int{},
 		dcache: map[string][]string{},
+		mcache: map[string]map[string]bool{},
 		views:  map[string]*viewState{},
 	}
 	for name, cv := range d.Context {
@@ -141,6 +153,13 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 			return e.take()
 		}
 	}
+	for _, p := range e.panels {
+		if id != 0 && p.markRunID == id {
+			e.markFinished(p, stdout, runErr)
+			e.evaluateContent(true)
+			return e.take()
+		}
+	}
 	var ps *panelState
 	for _, p := range e.panels {
 		if id != 0 && p.runID == id {
@@ -159,6 +178,7 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 	} else {
 		e.cache[cmd] = parsed
 		e.setRows(ps, cmd, parsed)
+		e.jumpToMark(ps)
 	}
 	e.propagate(ps.def.ID, true)
 	e.evaluateContent(true)
@@ -189,6 +209,7 @@ func (e *Engine) Move(delta int) Effects {
 		return e.take()
 	}
 	ps.cursor = cursor
+	ps.moved = true
 	hasDeps := len(e.def.Dependents(ps.def.ID)) > 0
 	if hasDeps {
 		e.propagate(ps.def.ID, false)
@@ -252,6 +273,7 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 		}
 		if _, ok := e.selection(dep); !ok {
 			e.cancel(ps)
+			e.cancelMark(ps)
 			*ps = panelState{def: ps.def, blocked: "no selection in " + dep}
 			return
 		}
@@ -273,6 +295,8 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 	if cached, ok := e.cache[cmd]; ok {
 		ps.pending = false
 		e.setRows(ps, cmd, cached)
+		e.cachedMark(ps)
+		e.jumpToMark(ps)
 		return
 	}
 	if !run {
@@ -297,6 +321,7 @@ func (e *Engine) render(ps *panelState) (string, bool) {
 // start begins running cmd for ps, replacing any in-flight run.
 func (e *Engine) start(ps *panelState, cmd string) {
 	e.cancel(ps)
+	e.startMark(ps)
 	e.nextID++
 	ps.runID, ps.runCmd, ps.pending = e.nextID, cmd, false
 	ps.stale = len(ps.rows) > 0
@@ -432,6 +457,12 @@ func (e *Engine) View(id string) PanelView {
 			s, _ := ps.def.Label.Render(r, tmpl.Display)
 			v.Lines = append(v.Lines, s)
 		}
+	}
+	if ps.def.Mark != nil {
+		for i := range ps.rows {
+			v.Marked = append(v.Marked, e.isMarked(ps, i))
+		}
+		v.MarkErr = ps.markErr
 	}
 	return v
 }

@@ -95,6 +95,7 @@ func (e *Engine) RenderAction(ref ActionRef, input string) (runner.Request, erro
 func (e *Engine) ActionDone(ref ActionRef) Effects {
 	clear(e.cache)
 	clear(e.dcache)
+	clear(e.mcache)
 	refresh := ref.Action.Refresh
 	if len(refresh) == 0 && ref.Panel != "" && !e.IsContent(ref.Panel) {
 		refresh = []string{ref.Panel}

@@ -45,6 +45,9 @@ func (h *harness) apply(fx Effects) {
 	}
 	for _, r := range fx.Runs {
 		slot := r.Panel
+		if r.Mark {
+			slot += ":mark"
+		}
 		if old, ok := h.inflight[slot]; ok {
 			h.t.Fatalf("%s started run %q while %q still in flight and not cancelled", slot, r.Req.Cmd, old.Req.Cmd)
 		}

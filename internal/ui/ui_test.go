@@ -574,3 +574,45 @@ func last(r *fakeRunner) string {
 	c := r.commands()
 	return c[len(c)-1]
 }
+
+func TestMarkedRows(t *testing.T) {
+	src := `
+panels:
+  - id: branches
+    title: Branches
+    source: git branch
+    mark: {source: git branch --show-current}
+  - id: svc
+    title: Services
+    source: svc
+    rows: ".[]"
+    mark: .current
+    columns:
+      - {title: Name, value: "{{.n}}"}
+      - {title: Up, value: "{{.up}}"}
+`
+	r := &fakeRunner{out: map[string]string{
+		"git branch":                "feature\nmain\n",
+		"git branch --show-current": "main\n",
+		"svc":                       `[{"n":"web","up":1,"current":true},{"n":"api","up":2}]`,
+	}}
+	s := screen(start(t, src, r))
+	for _, want := range []string{"│  feature", "│* main", "│* web", "│  api"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q:\n%s", want, s)
+		}
+	}
+	// Headers shift with the rows so columns stay aligned.
+	var header, web string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, "Name") {
+			header = l
+		}
+		if strings.Contains(l, "* web") {
+			web = l
+		}
+	}
+	if strings.Index(header, "Name") != strings.Index(web, "web") || strings.Index(header, "Up") != strings.Index(web, "1") {
+		t.Errorf("columns misaligned:\n%s\n%s", header, web)
+	}
+}

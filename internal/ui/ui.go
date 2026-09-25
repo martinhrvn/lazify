@@ -30,6 +30,7 @@ var (
 	styleHint      = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	styleTabActive = lipgloss.NewStyle().Bold(true).Underline(true)
 	styleLive      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleMark      = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
 )
 
 // Model is the root Bubble Tea model.
@@ -341,14 +342,26 @@ func (m Model) panelLines(id string, w, h int) []string {
 		return []string{styleDim.Render("loading…")}
 	}
 
+	// Panels with a mark reserve a two-column gutter: "* " for marked rows.
+	gutter := func(i int) string { return "" }
+	if v.Marked != nil {
+		gutter = func(i int) string {
+			if i >= 0 && v.Marked[i] {
+				return "* "
+			}
+			return "  "
+		}
+	}
 	if len(v.Headers) > 0 {
 		widths := columnWidths(v.Headers, v.Columns)
-		head = append(head, styleHeader.Render(alignRow(v.Headers, widths)))
-		for _, cells := range v.Columns {
-			rows = append(rows, alignRow(cells, widths))
+		head = append(head, styleHeader.Render(gutter(-1)+alignRow(v.Headers, widths)))
+		for i, cells := range v.Columns {
+			rows = append(rows, gutter(i)+alignRow(cells, widths))
 		}
 	} else {
-		rows = v.Lines
+		for i, l := range v.Lines {
+			rows = append(rows, gutter(i)+l)
+		}
 	}
 
 	avail := max(1, h-len(head))
@@ -361,6 +374,8 @@ func (m Model) panelLines(id string, w, h int) []string {
 			line = styleCursor.Render(padRight(line, w))
 		case v.Stale:
 			line = styleDim.Render(line)
+		case v.Marked != nil && v.Marked[i]:
+			line = styleMark.Render(line)
 		}
 		out = append(out, line)
 	}

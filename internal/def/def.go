@@ -89,6 +89,7 @@ type Panel struct {
 	Children string
 	Parent   string // set on the panel named by another panel's Children
 	Refresh  time.Duration
+	Mark     *Mark  // which rows to highlight as current; nil = none
 	Side     string // left | center | right
 	Size     Size
 	// Content makes this a content panel: what to show, keyed by the active
@@ -100,6 +101,14 @@ type Panel struct {
 	// Deps are the panels whose selection this panel's source needs, in
 	// declaration order. A drill-in child also depends on its parent.
 	Deps []string
+}
+
+// Mark highlights rows: those whose Path value is truthy, or those whose Match
+// (default: key, else label) is among the output lines of Source.
+type Mark struct {
+	Path   []string
+	Source *tmpl.Template
+	Match  *tmpl.Template
 }
 
 // Column is one aligned column of a panel's rows.
@@ -229,6 +238,7 @@ type rawPanel struct {
 	Side     string                `yaml:"side"`
 	Content  map[string]rawContent `yaml:"content"`
 	Actions  []rawAction           `yaml:"actions"`
+	Mark     yaml.Node             `yaml:"mark"`
 }
 
 type rawColumn struct {
@@ -730,6 +740,10 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 		p.Refresh = r
 	}
 
+	if rp.Mark.Kind != 0 {
+		p.Mark = v.mark(d, p, rp.Mark, at("mark"))
+	}
+
 	if rp.Children != "" {
 		child := d.Panel(rp.Children)
 		switch {
@@ -757,7 +771,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
 		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "",
-		"refresh": rp.Refresh != "",
+		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
 	} {
 		if set {
 			v.errorf(v.line("panels", i, field), "%s: %s only applies to list panels", what, field)
@@ -866,4 +880,48 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// mark validates a panel's mark: a row path, or {source, match}.
+func (v *validator) mark(d *Definition, p *Panel, n yaml.Node, line int) *Mark {
+	what := "panel " + p.ID + ": mark"
+	if n.Kind == yaml.ScalarNode {
+		t, err := tmpl.Parse("{{" + n.Value + "}}")
+		if err != nil || len(t.Refs()) != 1 || t.Refs()[0].Scope != tmpl.ScopeRow || n.Value == "." {
+			v.errorf(line, "%s: must be a row path like .current or {source: ..., match: ...}, got %q", what, n.Value)
+			return nil
+		}
+		return &Mark{Path: t.Refs()[0].Path}
+	}
+	if n.Kind != yaml.MappingNode {
+		v.errorf(line, "%s: must be a row path like .current or {source: ..., match: ...}", what)
+		return nil
+	}
+	var src, match string
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		switch k, val := n.Content[i].Value, n.Content[i+1].Value; k {
+		case "source":
+			src = val
+		case "match":
+			match = val
+		default:
+			v.errorf(n.Content[i].Line, "%s: unknown field %q (use source and match)", what, k)
+		}
+	}
+	m := &Mark{}
+	if src == "" {
+		v.errorf(line, "%s: source is required", what)
+	} else {
+		var deps []string
+		m.Source, deps = v.template(line, what+": source", src, d, refRules{panels: true, self: p.ID})
+		for _, dep := range deps {
+			if !slices.Contains(p.Deps, dep) {
+				p.Deps = append(p.Deps, dep)
+			}
+		}
+	}
+	if match != "" {
+		m.Match, _ = v.template(line, what+": match", match, d, refRules{row: true, panels: true})
+	}
+	return m
 }

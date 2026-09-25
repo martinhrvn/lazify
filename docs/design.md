@@ -62,6 +62,7 @@ panels:
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
+    mark: {source: git branch --show-current}           # * on the checked-out branch; cursor starts there
     actions:                                           # while Branches is focused
       - {key: space, desc: Checkout, cmd: "git checkout {{.line}}", refresh: [status, branches, commits]}
       - {key: n, desc: New branch, prompt: Name, cmd: "git checkout -b {{input}}", refresh: [status, branches]}
@@ -195,6 +196,7 @@ panels:
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
 | `children` | no | Panel id to drill into on Enter. That panel is then not shown at top level. |
 | `refresh` | no | Auto re-run interval (e.g. `10s`). |
+| `mark` | no | Highlights "current" rows with `*` (and starts the cursor on the first one). Either a row path — `mark: .current` marks rows where it is truthy (null, false, 0 and blank strings are not) — or a command — `mark: {source: git branch --show-current, match: "{{.line}}"}` marks rows whose `match` (default: `key`, else label) is one of its output lines. The command runs with the panel (refresh, actions) and is cached like rows; failures just show no marks. |
 | `size` | no | Height in its column: `fit` (content height, capped at a fair share), `<n>` (fixed lines) or `<n>fr` (flex weight). Default `1fr`. Not allowed on drill-in children. |
 | `side` | no | `left`, `center` or `right`; list panels default to `left`, content panels to `center`. Not allowed on drill-in children. |
 | `content` | — | Makes this a **content panel** (instead of `source`): map of list-panel id or `default` → `{tabs: [...]}`. List-only fields (`rows`, `split`, `label`, `columns`, `key`, `children`, `refresh`) are not allowed. |
@@ -345,6 +347,7 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 
 - **Panel tabs** (lazygit's Local Branches / Remotes / Tags in one box): multiple panels
   sharing one slot, switched with `[`/`]` when the panel is focused? Conflicts with content-tab keys.
+- ~~Current row indicator~~: done — `mark:` (row path or command output as a set).
 - **Colours/status**: declarative value→colour map, e.g.
   `color: { value: "{{.lastStatus}}", map: { RUNNING: green, STOPPED: red } }` — no expressions.
 - Display helpers (basename of an ARN, relative time) without becoming a language — a fixed
