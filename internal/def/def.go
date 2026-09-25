@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,8 +41,31 @@ type Definition struct {
 	Panels       []*Panel
 	Detail       map[string]*Detail
 	Actions      map[string][]*Action
+	Layout       Layout
 	// Order lists panel ids so that every panel comes after the panels it depends on.
 	Order []string
+}
+
+// Layout controls how panels are arranged around the main view.
+type Layout struct {
+	Focus      string // expand | equal
+	LeftWidth  int    // percent of terminal width
+	RightWidth int    // percent; only used when a panel is on the right
+}
+
+// SizeKind says how a panel claims height in its column.
+type SizeKind int
+
+const (
+	Flex  SizeKind = iota // share the remaining height by weight N
+	Fit                   // as tall as its content
+	Fixed                 // exactly N lines
+)
+
+// Size is a panel's height rule.
+type Size struct {
+	Kind SizeKind
+	N    int
 }
 
 // ContextVar is an app-wide switchable value.
@@ -66,6 +90,8 @@ type Panel struct {
 	Children string
 	Parent   string // set on the panel named by another panel's Children
 	Refresh  time.Duration
+	Side     string // left | right
+	Size     Size
 	// Deps are the panels whose selection this panel's source needs, in
 	// declaration order. A drill-in child also depends on its parent.
 	Deps []string
@@ -164,6 +190,13 @@ type rawDef struct {
 	Panels  []rawPanel             `yaml:"panels"`
 	Detail  map[string]rawDetail   `yaml:"detail"`
 	Actions map[string][]rawAction `yaml:"actions"`
+	Layout  rawLayout              `yaml:"layout"`
+}
+
+type rawLayout struct {
+	Focus      string `yaml:"focus"`
+	LeftWidth  int    `yaml:"left_width"`
+	RightWidth int    `yaml:"right_width"`
 }
 
 type rawCtx struct {
@@ -183,6 +216,8 @@ type rawPanel struct {
 	Key      string      `yaml:"key"`
 	Children string      `yaml:"children"`
 	Refresh  string      `yaml:"refresh"`
+	Size     string      `yaml:"size"`
+	Side     string      `yaml:"side"`
 }
 
 type rawColumn struct {
@@ -219,7 +254,7 @@ var unknownFieldRe = regexp.MustCompile(`^field (\S+) not found in type def\.raw
 
 var rawTypeNames = map[string]string{
 	"Def": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
-	"Detail": "detail", "Tab": "tab", "Action": "action",
+	"Detail": "detail", "Tab": "tab", "Action": "action", "Layout": "layout",
 }
 
 // Parse validates a definition from YAML. file is used in error messages.
@@ -516,6 +551,19 @@ func (v *validator) build(raw *rawDef) *Definition {
 			p.Refresh = r
 		}
 
+		p.Side = or(rp.Side, "left")
+		if p.Side != "left" && p.Side != "right" {
+			v.errorf(at("side"), "%s: side must be left or right, got %q", what, rp.Side)
+		}
+		p.Size = Size{Kind: Flex, N: 1}
+		if rp.Size != "" {
+			if s, ok := parseSize(rp.Size); ok {
+				p.Size = s
+			} else {
+				v.errorf(at("size"), "%s: size must be fit, a line count or <n>fr, got %q", what, rp.Size)
+			}
+		}
+
 		if rp.Children != "" {
 			child := d.Panel(rp.Children)
 			switch {
@@ -536,7 +584,14 @@ func (v *validator) build(raw *rawDef) *Definition {
 			p.Deps = append(p.Deps, p.Parent)
 		}
 	}
+	// A drill-in child is shown in its parent's slot, so it has no layout of its own.
+	for i, rp := range raw.Panels {
+		if p := d.Panel(rp.ID); p != nil && p.Parent != "" && (rp.Side != "" || rp.Size != "") {
+			v.errorf(v.line("panels", i), "panel %s: side/size not allowed on a drill-in child (it uses %s's slot)", p.ID, p.Parent)
+		}
+	}
 	v.order(d)
+	v.layout(d, raw.Layout)
 
 	for _, id := range v.mapKeys("detail") {
 		line := v.line("detail", id)
@@ -610,6 +665,51 @@ func (v *validator) build(raw *rawDef) *Definition {
 		}
 	}
 	return d
+}
+
+// layout validates the layout block and fills in defaults.
+func (v *validator) layout(d *Definition, rl rawLayout) {
+	hasRight := slices.ContainsFunc(d.Panels, func(p *Panel) bool { return p.Side == "right" })
+	d.Layout = Layout{Focus: or(rl.Focus, "expand"), LeftWidth: rl.LeftWidth, RightWidth: rl.RightWidth}
+	if d.Layout.Focus != "expand" && d.Layout.Focus != "equal" {
+		v.errorf(v.line("layout", "focus"), "layout: focus must be expand or equal, got %q", rl.Focus)
+	}
+	if d.Layout.LeftWidth == 0 {
+		d.Layout.LeftWidth = 40
+		if hasRight {
+			d.Layout.LeftWidth = 30
+		}
+	}
+	if d.Layout.RightWidth == 0 {
+		d.Layout.RightWidth = 25
+	}
+	for _, w := range []struct {
+		name string
+		val  int
+	}{{"left_width", d.Layout.LeftWidth}, {"right_width", d.Layout.RightWidth}} {
+		if w.val < 10 || w.val > 80 {
+			v.errorf(v.line("layout", w.name), "layout: %s must be between 10 and 80 (percent), got %d", w.name, w.val)
+		}
+	}
+	if d.Layout.LeftWidth+d.Layout.RightWidth > 90 {
+		v.errorf(v.line("layout"), "layout: left_width + right_width must leave at least 10%% for main")
+	}
+}
+
+// parseSize parses `fit`, `<n>` (fixed lines) or `<n>fr` (flex weight).
+func parseSize(s string) (Size, bool) {
+	if s == "fit" {
+		return Size{Kind: Fit}, true
+	}
+	kind, num := Fixed, s
+	if n, ok := strings.CutSuffix(s, "fr"); ok {
+		kind, num = Flex, n
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return Size{}, false
+	}
+	return Size{Kind: kind, N: n}, true
 }
 
 // keyPath parses a row path such as `.fields.0`.

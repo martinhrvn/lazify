@@ -174,6 +174,8 @@ actions:
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
 | `children` | no | Panel id to drill into on Enter. That panel is then not shown at top level. |
 | `refresh` | no | Auto re-run interval (e.g. `10s`). |
+| `size` | no | Height in its column: `fit` (content height, capped at a fair share), `<n>` (fixed lines) or `<n>fr` (flex weight). Default `1fr`. Not allowed on drill-in children. |
+| `side` | no | `left` (default) or `right` of the main view. Not allowed on drill-in children. |
 
 **Detail tab**: `name`, `cmd`, `mode: once|stream` (default `once`), `format: text|json` (json = pretty-print/colourise).
 
@@ -218,11 +220,26 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 
 ## 7. Layout & keys
 
-- Left column: top-level panels stacked in declaration order. Focused panel gets more
-  height (lazygit style). A drilled-in panel occupies its parent's slot with a breadcrumb
-  title (`Commits › a1b2c3 › Files`).
-- Right: main view = tab bar + scrollable viewport (ANSI passthrough) for the focused row.
+- Columns: `[left panels][main][right panels]`. Panels go left unless `side: right`; with no
+  right panels the layout is `[left][main]`. Within a column panels stack in declaration order.
+  A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`).
+- Main view = tab bar + scrollable viewport (ANSI passthrough) for the focused row. It gets the
+  width left over by the side columns (min 10 columns, otherwise the left column takes it).
+- Panel numbers, `tab` order and `1..9` follow the screen: left column top→bottom, then right.
 - Bottom line: key hints for the focused panel's actions + status/errors.
+
+```yaml
+layout:
+  focus: expand     # expand (default) | equal
+  left_width: 40    # % of width; default 40, or 30 when some panel is on the right
+  right_width: 25   # %; default 25
+```
+
+Height within each column: `<n>` panels get n lines; `fit` panels get their content (capped at
+an equal share); flex (`<n>fr`) panels share the rest by weight. With `focus: expand` the
+focused flex panel takes the spare height and other flex panels shrink to their content
+(accordion); with `focus: equal` flex panels keep their share regardless of focus (lazygit).
+The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 
 | key | action |
 |---|---|

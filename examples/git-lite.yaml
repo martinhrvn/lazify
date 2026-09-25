@@ -1,5 +1,11 @@
 name: git-lite
+layout:
+  focus: equal                                         # like lazygit: panels keep equal heights
 panels:
+  - id: status
+    title: Status
+    source: git status -sb | head -1
+    size: fit                                          # only as tall as its content
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
@@ -13,6 +19,10 @@ panels:
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
+  - id: tags
+    title: Tags
+    source: git tag --sort=-creatordate
+    side: right                                        # right of the main view
 
 detail:
   commits:

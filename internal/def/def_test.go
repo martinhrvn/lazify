@@ -15,7 +15,7 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Name != "git-lite" {
 		t.Errorf("Name = %q", d.Name)
 	}
-	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"branches", "commits", "files"}) {
+	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "tags"}) {
 		t.Errorf("panels = %v", got)
 	}
 	commits, files := d.Panel("commits"), d.Panel("files")
@@ -28,10 +28,10 @@ func TestLoadGitExample(t *testing.T) {
 	if !reflect.DeepEqual(files.Deps, []string{"commits"}) {
 		t.Errorf("files deps = %v", files.Deps)
 	}
-	if !reflect.DeepEqual(d.Order, []string{"branches", "commits", "files"}) {
+	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "tags"}) {
 		t.Errorf("order = %v", d.Order)
 	}
-	if !reflect.DeepEqual(topLevel(d), []string{"branches", "commits"}) {
+	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "tags"}) {
 		t.Errorf("top level = %v", topLevel(d))
 	}
 	if !reflect.DeepEqual(commits.Key, []string{"fields", "0"}) {
@@ -42,6 +42,9 @@ func TestLoadGitExample(t *testing.T) {
 	}
 	if d.Timeout != 30*time.Second {
 		t.Errorf("default timeout = %v", d.Timeout)
+	}
+	if d.Layout.Focus != "equal" || d.Panel("status").Size.Kind != Fit || d.Panel("tags").Side != "right" {
+		t.Errorf("layout = %+v, status size = %+v, tags side = %q", d.Layout, d.Panel("status").Size, d.Panel("tags").Side)
 	}
 	acts := d.Actions["branches"]
 	if len(acts) != 1 || acts[0].Key != "space" || acts[0].Mode != "background" {
@@ -246,5 +249,77 @@ func TestUnknownFieldIsFriendlyAndValidationContinues(t *testing.T) {
 	}
 	if strings.Contains(msg, "rawPanel") {
 		t.Errorf("error leaks Go type names: %q", msg)
+	}
+}
+
+func TestLayoutDefaults(t *testing.T) {
+	d, err := Parse([]byte("panels: [{id: a, source: x}]"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Layout != (Layout{Focus: "expand", LeftWidth: 40, RightWidth: 25}) {
+		t.Errorf("layout = %+v", d.Layout)
+	}
+	p := d.Panel("a")
+	if p.Side != "left" || p.Size != (Size{Kind: Flex, N: 1}) {
+		t.Errorf("side/size = %q/%+v", p.Side, p.Size)
+	}
+
+	d, err = Parse([]byte("panels: [{id: a, source: x}, {id: b, source: y, side: right}]"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Layout.LeftWidth != 30 || d.Layout.RightWidth != 25 {
+		t.Errorf("with right panels, layout = %+v", d.Layout)
+	}
+}
+
+func TestLayoutParsing(t *testing.T) {
+	src := `
+layout: {focus: equal, left_width: 35, right_width: 20}
+panels:
+  - {id: a, source: x, size: fit}
+  - {id: b, source: x, size: 5}
+  - {id: c, source: x, size: 3fr, side: right}
+  - {id: d, source: x, size: 1fr, side: left}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Layout != (Layout{Focus: "equal", LeftWidth: 35, RightWidth: 20}) {
+		t.Errorf("layout = %+v", d.Layout)
+	}
+	want := map[string]Size{"a": {Kind: Fit}, "b": {Kind: Fixed, N: 5}, "c": {Kind: Flex, N: 3}, "d": {Kind: Flex, N: 1}}
+	for id, s := range want {
+		if got := d.Panel(id).Size; got != s {
+			t.Errorf("%s size = %+v, want %+v", id, got, s)
+		}
+	}
+	if d.Panel("c").Side != "right" {
+		t.Errorf("c side = %q", d.Panel("c").Side)
+	}
+}
+
+func TestLayoutValidation(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{"bad side", "panels:\n  - id: a\n    source: x\n    side: top", "t.yaml:4: panel a: side must be left or right"},
+		{"bad size", "panels:\n  - id: a\n    source: x\n    size: big", "t.yaml:4: panel a: size"},
+		{"zero size", "panels: [{id: a, source: x, size: 0}]", "size"},
+		{"zero fr", "panels: [{id: a, source: x, size: 0fr}]", "size"},
+		{"child side", "panels:\n  - {id: a, source: x, children: b}\n  - {id: b, source: x, side: right}", "panel b: side/size not allowed on a drill-in child"},
+		{"child size", "panels:\n  - {id: a, source: x, children: b}\n  - {id: b, source: x, size: fit}", "not allowed on a drill-in child"},
+		{"bad focus", "layout: {focus: grow}\npanels: [{id: a, source: x}]", "t.yaml:1: layout: focus must be expand or equal"},
+		{"narrow", "layout: {left_width: 5}\npanels: [{id: a, source: x}]", "left_width"},
+		{"wide", "layout: {right_width: 85}\npanels: [{id: a, source: x}]", "right_width"},
+		{"too wide together", "layout: {left_width: 60, right_width: 40}\npanels: [{id: a, source: x}]", "leave at least 10% for main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src), "t.yaml")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error %v\ndoes not contain %q", err, tt.want)
+			}
+		})
 	}
 }

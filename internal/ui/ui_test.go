@@ -205,3 +205,98 @@ func TestQuit(t *testing.T) {
 		t.Error("q did not quit")
 	}
 }
+
+// boxHeight returns the total height (with borders) of the box titled title.
+func boxHeight(t *testing.T, s, title string) int {
+	t.Helper()
+	var lines [][]rune
+	for _, l := range strings.Split(s, "\n") {
+		lines = append(lines, []rune(l))
+	}
+	for i, l := range lines {
+		col := strings.Index(string(l), title)
+		if col < 0 {
+			continue
+		}
+		start := strings.LastIndex(string(l)[:col], "╭")
+		start = len([]rune(string(l)[:start])) // byte offset → rune column
+		for j := i + 1; j < len(lines); j++ {
+			if start < len(lines[j]) && lines[j][start] == '╰' {
+				return j - i + 1
+			}
+		}
+	}
+	t.Fatalf("no box titled %q:\n%s", title, s)
+	return 0
+}
+
+const lazygitLayout = `
+layout: {focus: equal}
+panels:
+  - {id: status, title: Status, source: s, size: fit}
+  - {id: branches, title: Branches, source: b}
+  - {id: commits, title: Commits, source: c}
+  - {id: stash, title: Stash, source: st}
+  - {id: tags, title: Tags, source: t, side: right}
+`
+
+func TestLazygitLayout(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"s": "main ↑1\n", "t": "v1\n"}}
+	m := start(t, lazygitLayout, r)
+	s := screen(m)
+	// 29 body lines: status 1+2, three flex boxes share 26 → 9,9,8 with borders.
+	if h := boxHeight(t, s, "Status"); h != 3 {
+		t.Errorf("status height %d, want 3:\n%s", h, s)
+	}
+	for title, want := range map[string]int{"Branches": 9, "Commits": 9, "Stash": 8} {
+		if h := boxHeight(t, s, title); h != want {
+			t.Errorf("%s height %d, want %d", title, h, want)
+		}
+	}
+	// Focusing another panel doesn't change heights in equal mode.
+	if h := boxHeight(t, screen(key(t, m, "tab")), "Branches"); h != 9 {
+		t.Errorf("branches height after focus %d, want 9", h)
+	}
+}
+
+func TestRightColumn(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"t": "v1\n"}}
+	m := start(t, lazygitLayout, r)
+	first := strings.Split(screen(m), "\n")[0]
+	status, main, tags := strings.Index(first, "Status"), strings.Index(first, "Main"), strings.Index(first, "Tags")
+	if !(status < main && main < tags) {
+		t.Errorf("want Status | Main | Tags, got %q", first)
+	}
+	if !strings.Contains(first, "[5] Tags") {
+		t.Errorf("right panel should be numbered after left ones: %q", first)
+	}
+	// Tags spans the full height on its own.
+	if h := boxHeight(t, screen(m), "Tags"); h != 29 {
+		t.Errorf("tags height %d, want 29", h)
+	}
+	// Width: 30% left, 25% right of 100 columns.
+	if col := ansi.StringWidth(first[:main]) - 3; col != 30 { // "╭─ " precedes the title
+		t.Errorf("main box starts at column %d, want 30", col)
+	}
+}
+
+func TestFitsWindowWithRightColumn(t *testing.T) {
+	for _, h := range []int{30, 12, 5} {
+		d, err := def.Parse([]byte(lazygitLayout), "t.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m tea.Model = New(d, &fakeRunner{}, nil)
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 90, Height: h})
+		m = drive(t, m, m.Init())
+		lines := strings.Split(m.View(), "\n")
+		if len(lines) != h {
+			t.Errorf("height %d: view has %d lines", h, len(lines))
+		}
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w > 90 {
+				t.Errorf("height %d: line %d is %d wide", h, i, w)
+			}
+		}
+	}
+}

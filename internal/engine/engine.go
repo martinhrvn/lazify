@@ -187,15 +187,20 @@ func (e *Engine) Refresh() []Run {
 	return nil
 }
 
-// TopLevel lists panels shown in the left column (not drill-in children).
+// TopLevel lists the panels that own a slot (not drill-in children) in visual
+// order: the left column top to bottom, then the right column.
 func (e *Engine) TopLevel() []string {
-	var ids []string
+	var left, right []string
 	for _, p := range e.def.Panels {
-		if p.Parent == "" {
-			ids = append(ids, p.ID)
+		switch {
+		case p.Parent != "":
+		case p.Side == "right":
+			right = append(right, p.ID)
+		default:
+			left = append(left, p.ID)
 		}
 	}
-	return ids
+	return append(left, right...)
 }
 
 // Focused returns the id of the focused panel.

@@ -231,3 +231,20 @@ func TestSelection(t *testing.T) {
 		t.Errorf("selection = %v, %v", sel, ok)
 	}
 }
+
+func TestTopLevelIsVisualOrder(t *testing.T) {
+	src := `
+panels:
+  - {id: stash, source: x, side: right}
+  - {id: status, source: x}
+  - {id: tags, source: x, side: right}
+  - {id: branches, source: x}
+`
+	e := New(mustDef(t, src), nil)
+	if got := e.TopLevel(); !reflect.DeepEqual(got, []string{"status", "branches", "stash", "tags"}) {
+		t.Errorf("top level = %v", got)
+	}
+	if e.Focused() != "status" {
+		t.Errorf("initial focus = %q", e.Focused())
+	}
+}

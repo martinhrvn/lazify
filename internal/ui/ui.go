@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -116,44 +117,70 @@ func (m Model) View() string {
 		return ""
 	}
 	bodyH := m.height - 1
-	leftW := max(24, m.width*2/5)
-	if leftW > m.width-10 {
-		leftW = m.width
+	var left, right []string
+	for _, id := range m.eng.TopLevel() {
+		if m.def.Panel(id).Side == "right" {
+			right = append(right, id)
+		} else {
+			left = append(left, id)
+		}
 	}
 
-	left := m.leftColumn(leftW, bodyH)
-	body := left
-	if rightW := m.width - leftW; rightW > 0 {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, left, m.mainView(rightW, bodyH))
+	lay := m.def.Layout
+	leftW := m.width * lay.LeftWidth / 100
+	rightW := 0
+	if len(right) > 0 {
+		rightW = m.width * lay.RightWidth / 100
 	}
-	return body + "\n" + m.statusLine()
+	mainW := m.width - leftW - rightW
+	if mainW < 10 { // too narrow for main: give its space to the left column
+		leftW, mainW = leftW+mainW, 0
+	}
+
+	cols := []string{m.column(left, leftW, bodyH)}
+	if mainW > 0 {
+		cols = append(cols, m.mainView(mainW, bodyH))
+	}
+	if rightW > 0 {
+		cols = append(cols, m.column(right, rightW, bodyH))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
 }
 
-// leftColumn stacks the top-level panels; the focused one gets the spare height.
-func (m Model) leftColumn(w, h int) string {
-	ids := m.eng.TopLevel()
-	n := len(ids)
-	inner := h - 2*n // each box has a top and bottom border
-	small := max(1, inner/(n+1))
-	heights := make([]int, n)
-	used := 0
+// column stacks panels in a box each, sized by the definition's layout rules,
+// clipped or padded to exactly h lines.
+func (m Model) column(ids []string, w, h int) string {
+	if len(ids) == 0 {
+		return clip("", w, h)
+	}
+	slots := make([]slot, len(ids))
 	for i, id := range ids {
-		if id != m.eng.Focused() {
-			heights[i] = min(small, max(1, m.contentLines(id)))
-			used += heights[i]
+		slots[i] = slot{
+			size:    m.def.Panel(id).Size,
+			content: m.contentLines(id),
+			focused: id == m.eng.Focused(),
 		}
 	}
+	hs := heights(h-2*len(ids), slots, m.def.Layout.Focus) // each box has 2 border lines
+	all := m.eng.TopLevel()
+	boxes := make([]string, len(ids))
 	for i, id := range ids {
-		if id == m.eng.Focused() {
-			heights[i] = max(1, inner-used)
-		}
+		title := fmt.Sprintf("[%d] %s", slices.Index(all, id)+1, m.eng.View(id).Title)
+		boxes[i] = box(title, m.panelLines(id, w-2, hs[i]), w, hs[i], id == m.eng.Focused())
 	}
-	boxes := make([]string, n)
-	for i, id := range ids {
-		title := fmt.Sprintf("[%d] %s", i+1, m.eng.View(id).Title)
-		boxes[i] = box(title, m.panelLines(id, w-2, heights[i]), w, heights[i], id == m.eng.Focused())
+	return clip(lipgloss.JoinVertical(lipgloss.Left, boxes...), w, h)
+}
+
+// clip cuts or pads s to exactly h lines of width w.
+func clip(s string, w, h int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > h {
+		lines = lines[:h]
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, boxes...)
+	for len(lines) < h {
+		lines = append(lines, strings.Repeat(" ", w))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) contentLines(id string) int {
@@ -220,7 +247,7 @@ func (m Model) mainView(w, h int) string {
 		b, _ := json.MarshalIndent(sel, "", "  ")
 		lines = strings.Split(string(b), "\n")
 	}
-	return box("Main", lines, w, h-2, false)
+	return clip(box("Main", lines, w, max(0, h-2), false), w, h)
 }
 
 func (m Model) statusLine() string {

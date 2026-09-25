@@ -10,6 +10,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `ui`: single panel renders rows, j/k, q
 - [x] `cmd/lazify`: `lazify <file|name>`, `lazify lint`, `lazify list`
 
+## Layout ✅
+- [x] `side: left|right` — main view in the middle when right panels exist
+- [x] `size: fit|<n>|<n>fr` per panel
+- [x] `layout.focus: expand|equal`, `left_width`, `right_width`
+- [x] focus order / numbering follows the screen
+
 ## M2 — reactive panels
 - [ ] engine: re-run dependents on selection change (topological), cancel in-flight runs
 - [ ] debounce selection changes (~150 ms)
