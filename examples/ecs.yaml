@@ -3,6 +3,50 @@ name: lazyecs
 env:                                     # every command runs with these; they follow the selects
   AWS_PROFILE: "{{profile.line}}"
   AWS_REGION:  "{{region.line}}"
+  # ECS_TAIL <task definition> <task id|service> [aws logs tail args...]: follow a
+  # task's (or every task of a service's) log stream. The awslogs group and stream
+  # prefix come from the task definition's first logging container; a task's
+  # stream is <prefix>/<container>/<task id>. Output is made readable by jq below.
+  ECS_TAIL: |
+    td=$1 which=$2; shift 2
+    info=$(aws ecs describe-task-definition --task-definition "$td" --output text \
+      --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]')
+    read -r name group prefix <<END
+    $info
+    END
+    [ -n "$group" ] && [ "$name" != None ] || { echo "no awslogs log configuration in $td"; exit 1; }
+    if [ "$prefix" = None ]; then :
+    elif [ "$which" = service ]; then set -- --log-stream-name-prefix "$prefix/$name/" "$@"
+    else set -- --log-stream-names "$prefix/$name/$which" "$@"
+    fi
+    aws logs tail "$group" --follow --since 1h --format short "$@" | jq -rR --unbuffered "$ECS_LOG_FORMAT"
+  # One line per JSON log event: time LEVEL logger message {extra fields}, with
+  # error stacks indented below. Bunyan/pino numeric levels and common string
+  # levels are understood; lines that aren't JSON pass through unchanged.
+  ECS_LOG_FORMAT: |
+    def lvl: if type == "number" then
+        (if . >= 60 then "FATAL" elif . >= 50 then "ERROR" elif . >= 40 then "WARN " elif . >= 30 then "INFO "
+         elif . >= 20 then "DEBUG" else "TRACE" end)
+      elif type == "string" then ascii_upcase
+        | if startswith("FATAL") or startswith("CRIT") then "FATAL" elif startswith("ERR") then "ERROR"
+          elif startswith("WARN") then "WARN " elif startswith("INFO") then "INFO "
+          elif startswith("DEBUG") then "DEBUG" elif startswith("TRACE") then "TRACE" else (. + "     ")[:5] end
+      else "     " end;
+    def indent: "\n    " + (tostring | gsub("\n"; "\n    "));
+    (index(" ") // -1) as $i
+    | (if $i > 0 then .[:$i] else "" end) as $ts
+    | ((if $i > 0 then .[$i+1:] else . end) | try fromjson catch null) as $j
+    | if ($j | type) != "object" then .
+      else ($j | del(._aws, .hostname, .pid, .v, .time, .timestamp, .level, .severity, .lvl, .name, .logger,
+                     .msg, .message, .err, .stack)) as $extra
+      | ($ts | sub("^[0-9-]+T"; "")) + " "
+        + ($j.level // $j.severity // $j.lvl | lvl) + " "
+        + (($j.name // $j.logger // "") | tostring) + "  "
+        + (($j.msg // $j.message // "") | tostring)
+        + (if $extra == {} then "" else " " + ($extra | tojson) end)
+        + (if ($j.err.stack | type) == "string" then ($j.err.stack | indent)
+           elif ($j.stack | type) == "string" then ($j.stack | indent) else "" end)
+      end
 
 panels:
   - id: profile                          # a select panel: press its number to pick
@@ -51,33 +95,16 @@ panels:
       - { title: Task,   value: "{{.id}}" }
       - { title: Status, value: "{{.lastStatus}}" }
 
-  # Logs: the log group and stream prefix live in the task definition (the
-  # first container logging with awslogs); a task's stream is
-  # <prefix>/<container>/<task id>. Without a prefix, the whole group is tailed.
   - id: main
     content:
       services:
         tabs:
-          - name: Logs
-            mode: stream
-            cmd: |
-              set -- $(aws ecs describe-task-definition --task-definition {{.taskDefinition}} \
-                --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]' \
-                --output text)
-              [ "$#" -eq 3 ] && [ "$1" != None ] || { echo "no awslogs log configuration in {{.taskDefinition}}"; exit 1; }
-              streams=--log-stream-name-prefix="$3/$1/"; [ "$3" = None ] && streams=
-              exec aws logs tail "$2" --follow --since 1h --format short $streams
+          - { name: Logs,   mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinition}} service' }
+          - { name: Errors, mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinition}} service --filter-pattern "{ \$.level >= 50 }"' }
           - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
           - { name: JSON,   cmd: "echo {{.}}", format: json }
       tasks:
         tabs:
-          - name: Logs
-            mode: stream
-            cmd: |
-              set -- $(aws ecs describe-task-definition --task-definition {{.taskDefinitionArn}} \
-                --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]' \
-                --output text)
-              [ "$#" -eq 3 ] && [ "$1" != None ] || { echo "no awslogs log configuration in {{.taskDefinitionArn}}"; exit 1; }
-              streams=--log-stream-names="$3/$1/{{.id}}"; [ "$3" = None ] && streams=
-              exec aws logs tail "$2" --follow --since 1h --format short $streams
-          - { name: JSON, cmd: "echo {{.}}", format: json }
+          - { name: Logs,   mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinitionArn}} {{.id}}' }
+          - { name: Errors, mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinitionArn}} {{.id}} --filter-pattern "{ \$.level >= 50 }"' }
+          - { name: JSON,   cmd: "echo {{.}}", format: json }
