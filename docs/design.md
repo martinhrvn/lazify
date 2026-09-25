@@ -130,6 +130,7 @@ actions:                                             # global: work whatever is 
 
 ```yaml
 name: lazyecs
+# Read-only: browse clusters, services and tasks and follow their logs. No actions.
 env:                                     # every command runs with these; they follow the selects
   AWS_PROFILE: "{{profile.line}}"
   AWS_REGION:  "{{region.line}}"
@@ -139,7 +140,7 @@ panels:
     title: Profile
     select: true
     source: aws configure list-profiles
-    default: default
+    mark: {source: 'echo "${AWS_PROFILE:-default}"'}   # start on your current profile
   - id: region
     title: Region
     select: true
@@ -147,9 +148,11 @@ panels:
 
   - id: clusters
     title: Clusters
+    # list-* gives ARNs; describe-* takes at most 100 (services: 10) per call and
+    # fails on none, so xargs feeds them in batches and skips an empty list.
     source: >
-      aws ecs describe-clusters --output json
-      --clusters $(aws ecs list-clusters --query clusterArns --output text)
+      aws ecs list-clusters --query clusterArns --output text | tr '\t' '\n' |
+      xargs -r -n 100 aws ecs describe-clusters --output json --clusters
     rows: .clusters[]
     key: .clusterArn
     label: "{{.clusterName}}"
@@ -157,8 +160,8 @@ panels:
   - id: services
     title: Services
     source: >
-      aws ecs describe-services --cluster {{clusters.clusterArn}} --output json
-      --services $(aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text)
+      aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text | tr '\t' '\n' |
+      xargs -r -n 10 aws ecs describe-services --cluster {{clusters.clusterArn}} --output json --services
     rows: .services[]
     key: .serviceArn
     columns:
@@ -166,46 +169,49 @@ panels:
       - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
       - { title: Status,  value: "{{.status}}" }
     refresh: 10s
-    actions:
-      - key: D
-        desc: Force new deployment
-        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
-        confirm: true
-        refresh: [services, tasks]
-      - key: s
-        desc: Scale
-        prompt: Desired count
-        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
-        refresh: [services]
 
   - id: tasks
     title: Tasks
     source: >
-      aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json
-      --tasks $(aws ecs list-tasks --cluster {{clusters.clusterArn}}
-               --service-name {{services.serviceName}} --query taskArns --output text)
-    rows: .tasks[]
+      aws ecs list-tasks --cluster {{clusters.clusterArn}} --service-name {{services.serviceName}}
+      --query taskArns --output text | tr '\t' '\n' |
+      xargs -r -n 100 aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json --tasks
+    rows: '.tasks[] | . + {id: (.taskArn | split("/") | last)}'   # id: the short task id
     key: .taskArn
     columns:
-      - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
+      - { title: Task,   value: "{{.id}}" }
       - { title: Status, value: "{{.lastStatus}}" }
-    actions:
-      - key: e
-        desc: Exec shell
-        mode: interactive          # suspends the TUI, gives the terminal to the command
-        cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh
 
+  # Logs: the log group and stream prefix live in the task definition (the
+  # first container logging with awslogs); a task's stream is
+  # <prefix>/<container>/<task id>. Without a prefix, the whole group is tailed.
   - id: main
     content:
       services:
         tabs:
+          - name: Logs
+            mode: stream
+            cmd: |
+              set -- $(aws ecs describe-task-definition --task-definition {{.taskDefinition}} \
+                --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]' \
+                --output text)
+              [ "$#" -eq 3 ] && [ "$1" != None ] || { echo "no awslogs log configuration in {{.taskDefinition}}"; exit 1; }
+              streams=--log-stream-name-prefix="$3/$1/"; [ "$3" = None ] && streams=
+              exec aws logs tail "$2" --follow --since 1h --format short $streams
           - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
           - { name: JSON,   cmd: "echo {{.}}", format: json }
       tasks:
         tabs:
           - name: Logs
             mode: stream
-            cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
+            cmd: |
+              set -- $(aws ecs describe-task-definition --task-definition {{.taskDefinitionArn}} \
+                --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]' \
+                --output text)
+              [ "$#" -eq 3 ] && [ "$1" != None ] || { echo "no awslogs log configuration in {{.taskDefinitionArn}}"; exit 1; }
+              streams=--log-stream-names="$3/$1/{{.id}}"; [ "$3" = None ] && streams=
+              exec aws logs tail "$2" --follow --since 1h --format short $streams
+          - { name: JSON, cmd: "echo {{.}}", format: json }
 ```
 
 ### 4.3 Field reference

@@ -86,8 +86,16 @@ func TestLoadECSExample(t *testing.T) {
 	if d.Panel("main").Content["tasks"].Tabs[0].Mode != "stream" {
 		t.Error("stream mode not parsed")
 	}
-	if d.Panel("tasks").Actions[0].Mode != "interactive" || !d.Panel("services").Actions[0].Confirm {
-		t.Error("action mode/confirm not parsed")
+	for _, p := range d.Panels {
+		if len(p.Actions) > 0 {
+			t.Errorf("the ECS example is read-only, but %s has actions", p.ID)
+		}
+	}
+	if len(d.Actions) > 0 {
+		t.Error("the ECS example is read-only, but has global actions")
+	}
+	if tab := d.Panel("main").Content["services"].Tabs[0]; tab.Name != "Logs" || tab.Mode != "stream" {
+		t.Errorf("services should tail their logs: %+v", tab)
 	}
 	if d.Env["AWS_PROFILE"] == nil {
 		t.Error("env not parsed")
