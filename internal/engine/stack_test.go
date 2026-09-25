@@ -221,3 +221,21 @@ panels:
 		t.Errorf("focused %q after two esc", h.e.Focused())
 	}
 }
+
+func TestCrumbsUseTheFirstColumn(t *testing.T) {
+	src := `
+panels:
+  - id: commits
+    source: git log
+    split: "\t"
+    enter: files
+    columns: [{title: Commit, value: "{{.fields.0}}"}, {title: Subject, value: "{{.fields.1}}"}]
+  - {id: files, source: "git show {{commits.fields.0}}"}
+`
+	h := newHarness(t, src)
+	h.finish("commits", "a1\tfix the thing\n")
+	h.enter()
+	if got := h.e.Crumbs("commits"); !reflect.DeepEqual(got, []string{"commits", "a1", "files"}) {
+		t.Errorf("crumbs = %q", got)
+	}
+}

@@ -57,6 +57,7 @@ type Model struct {
 	every       func(time.Duration, tea.Msg) tea.Cmd      // timer for auto-refresh (tea.Tick); swapped in tests
 	frame       int                                       // spinner animation frame
 	spinning    bool                                      // a spinner tick is scheduled
+	regions     *[]region                                 // where View drew each box, for mouse hit-testing
 	width       int
 	height      int
 }
@@ -79,6 +80,7 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		streams:     map[uint64]<-chan streamEvent{},
 		vps:         map[string]*viewport{},
 		vpIDs:       map[string]string{},
+		regions:     &[]region{},
 		debounce:    engine.Debounce,
 		toastTTL:    3 * time.Second,
 		input:       newPrompt(),
@@ -183,6 +185,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.toast != nil && m.toast.seq == msg.seq {
 			m.toast = nil
 		}
+	case tea.MouseMsg:
+		return m.mouse(msg)
 	case tea.KeyMsg:
 		if m.modal != modalNone {
 			return m.modalKey(msg)
@@ -301,18 +305,26 @@ func (m Model) View() string {
 		leftW, centerW = max(0, leftW-(10-centerW)), 10
 	}
 
+	*m.regions = (*m.regions)[:0]
 	var cols []string
+	x := 0
 	for _, c := range []struct {
 		ids []string
 		w   int
 	}{{left, leftW}, {center, centerW}, {right, rightW}} {
 		if len(c.ids) > 0 && c.w > 0 {
-			cols = append(cols, m.column(c.ids, c.w, bodyH))
+			cols = append(cols, m.column(c.ids, x, c.w, bodyH))
+			x += c.w
 		}
 	}
 	view := lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
 	if pv, ok := m.eng.Popup(); ok {
-		view = overlay(view, m.popupBox(pv, bodyH), m.width)
+		pb := m.popupBox(pv, bodyH)
+		view = overlay(view, pb, m.width)
+		// overlay centers the box; record where, for the mouse.
+		bw, bh := lipgloss.Width(pb), lipgloss.Height(pb)
+		*m.regions = append(*m.regions, region{id: pv.ID, popup: true, picker: pv.Picker,
+			x: max(0, (m.width-bw)/2), y: max(0, (m.height-bh)/2), w: bw, h: bh})
 	}
 	if m.modal == modalHelp {
 		view = overlay(view, m.helpBox(m.width, m.height), m.width)
@@ -322,7 +334,7 @@ func (m Model) View() string {
 
 // column stacks panels in a box each, sized by the definition's layout rules,
 // clipped or padded to exactly h lines.
-func (m Model) column(ids []string, w, h int) string {
+func (m Model) column(ids []string, x, w, h int) string {
 	// Each slot shows the top of its drill-down stack, sized by the slot's rules.
 	slots := make([]slot, len(ids))
 	for i, id := range ids {
@@ -344,6 +356,11 @@ func (m Model) column(ids []string, w, h int) string {
 		}
 		title, lines := m.panelBox(m.eng.Top(id), crumbs, w, hs[i])
 		boxes[i] = box(num+title, lines, w, hs[i], m.eng.Top(id) == m.eng.Focused())
+		y := 0
+		for _, b := range boxes[:i] {
+			y += strings.Count(b, "\n") + 1
+		}
+		*m.regions = append(*m.regions, region{id: m.eng.Top(id), slot: id, x: x, y: y, w: w, h: hs[i] + 2})
 	}
 	return clip(lipgloss.JoinVertical(lipgloss.Left, boxes...), w, h)
 }

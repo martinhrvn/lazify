@@ -91,6 +91,11 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `default:` (and `--set id=row`) picks the starting row of any list panel, not only selects
 - [x] `enter: {focus: <panel>|next}` makes Enter move focus instead of opening something
 
+## Mouse ✅
+- [x] click focuses a panel / selects a row; clicking the selected row = Enter; click a select = picker
+- [x] wheel moves list selection, scrolls content and help; clicks outside a popup ignored; `--no-mouse`
+- [ ] later: click tab names in a tab bar to switch tabs
+
 ## Helpers ✅
 - [x] `style:` value → decoration lookup (icons, animated spinner, colours; `text: false` = icon only) on columns, labels (`{value, map}`) and whole rows (`row_style`)
 - [x] `format:` ago, duration, bytes, basename, bar; styles key on the value before formatting

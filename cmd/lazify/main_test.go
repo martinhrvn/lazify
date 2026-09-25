@@ -195,3 +195,13 @@ func TestUsageNamesConfigDir(t *testing.T) {
 		t.Errorf("usage = %q", errOut.String())
 	}
 }
+
+func TestNoMouseFlag(t *testing.T) {
+	a, err := parseArgs([]string{"ecs", "--no-mouse"})
+	if err != nil || !a.noMouse || !reflect.DeepEqual(a.positional, []string{"ecs"}) {
+		t.Errorf("args = %+v, %v", a, err)
+	}
+	if a, _ := parseArgs([]string{"ecs"}); a.noMouse {
+		t.Error("mouse is on by default")
+	}
+}

@@ -390,6 +390,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `r` | refresh focused panel |
 | `1..9` on a select | open its picker (Enter chooses, Esc cancels; focus stays where it was) |
 | `?` | help overlay: focused panel's actions, globals, navigation |
+| mouse | click a panel to focus it and a row to select it; clicking the selected row is Enter; clicking a select opens its picker; the wheel moves the selection in lists and scrolls content. Clicks outside an open popup are ignored. `--no-mouse` leaves the mouse to the terminal (text selection; most terminals also select with shift+drag). |
 | `esc` | dismiss an action error (and close prompts/help) |
 | `q` | quit |
 
@@ -428,6 +429,7 @@ apps:
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.
 - `--set panel=row` — the row a list panel starts on (overrides its `default:`).
+- `--no-mouse` — don't capture the mouse (keeps the terminal's own text selection).
 - Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 
 ## 10. Architecture (Go, Bubble Tea — same stack as paleta)

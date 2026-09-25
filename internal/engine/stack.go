@@ -2,7 +2,6 @@ package engine
 
 import (
 	"slices"
-	"strings"
 )
 
 // Drill-down and popups. Each top-level slot has a stack of panels entered
@@ -198,8 +197,8 @@ func (e *Engine) selectedLabel(id string) string {
 	switch {
 	case v.Cursor < len(v.Lines):
 		return v.Lines[v.Cursor]
-	case v.Cursor < len(v.Columns):
-		return strings.Join(v.Columns[v.Cursor], " ")
+	case v.Cursor < len(v.Columns) && len(v.Columns[v.Cursor]) > 0:
+		return v.Columns[v.Cursor][0] // the first column identifies the row
 	}
 	return ""
 }

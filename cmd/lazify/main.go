@@ -22,6 +22,7 @@ import (
 const usage = `usage:
   lazify <id> [--set panel=row]...      run the app with that id from %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
+  --no-mouse                             leave the mouse to the terminal (text selection)
   lazify list                            list the apps in %[1]s
   lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
 
@@ -67,7 +68,13 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		fmt.Fprintln(stderr, "lazify:", err)
 		return 2
 	}
-	p := tea.NewProgram(ui.New(d, runner.Shell{}, a.set), tea.WithAltScreen())
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if !a.noMouse {
+		// Clicks and the wheel go to lazify; most terminals still select text
+		// with shift+drag (or run with --no-mouse).
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(ui.New(d, runner.Shell{}, a.set), opts...)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(stderr, "lazify:", err)
 		return 1
@@ -194,6 +201,7 @@ func list(stdout io.Writer, cfgDir string) int {
 type args struct {
 	positional []string
 	set        map[string]string
+	noMouse    bool // leave the mouse to the terminal (plain text selection)
 }
 
 func parseArgs(argv []string) (args, error) {
@@ -202,6 +210,9 @@ func parseArgs(argv []string) (args, error) {
 		arg := argv[i]
 		var kv string
 		switch {
+		case arg == "--no-mouse":
+			a.noMouse = true
+			continue
 		case arg == "--set":
 			if i+1 >= len(argv) {
 				return a, errors.New("--set needs ctx=value")

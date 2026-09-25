@@ -182,6 +182,7 @@ func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
+	{"click", "focus panel, select row (again: enter)"}, {"wheel", "move / scroll"},
 	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows"}, {"?", "help"}, {"q", "quit"},
 }
 
