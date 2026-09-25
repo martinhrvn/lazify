@@ -166,6 +166,7 @@ func TestValidationErrors(t *testing.T) {
 		{"column without value", "panels:\n  - {id: a, source: x, columns: [{title: t}]}", "value is required"},
 		{"bad key", "panels:\n  - {id: a, source: x, key: 'foo'}", "key"},
 		{"bad refresh", "panels:\n  - {id: a, source: x, refresh: soon}", "refresh"},
+		{"refresh too often", "panels:\n  - {id: a, source: x, refresh: 200ms}", "panel a: refresh: 200ms is too often (minimum 1s)"},
 		{"unknown enter target", "panels:\n  - {id: a, source: x, enter: b}", "panel a: enter: unknown panel \"b\""},
 		{"enter self", "panels:\n  - {id: a, source: x, enter: a}", "panel a: enter: a panel cannot enter itself"},
 		{"two parents", "panels:\n  - {id: a, source: x, enter: c}\n  - {id: b, source: x, enter: c}\n  - {id: c, source: x}", "c is already entered from a"},

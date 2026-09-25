@@ -117,6 +117,7 @@ func start(t *testing.T, src string, r runner.Runner) tea.Model {
 	model := New(d, r, nil)
 	model.debounce = 0
 	model.toastTTL = 0 // keep toasts visible; a real expiry would sleep in drive()
+	model.every = func(time.Duration, tea.Msg) tea.Cmd { return nil } // no auto-refresh timers
 	var m tea.Model = model
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return drive(t, m, m.Init())

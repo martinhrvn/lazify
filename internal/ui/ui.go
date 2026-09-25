@@ -54,6 +54,7 @@ type Model struct {
 	toast       *toast
 	toastSeq    int
 	execProcess func(*exec.Cmd, tea.ExecCallback) tea.Cmd // tea.ExecProcess; swapped in tests
+	every       func(time.Duration, tea.Msg) tea.Cmd      // timer for auto-refresh (tea.Tick); swapped in tests
 	width       int
 	height      int
 }
@@ -81,10 +82,25 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		input:       newPrompt(),
 		helpVP:      &viewport{},
 		execProcess: tea.ExecProcess,
+		every: func(d time.Duration, msg tea.Msg) tea.Cmd {
+			return tea.Tick(d, func(time.Time) tea.Msg { return msg })
+		},
 	}
 }
 
-func (m Model) Init() tea.Cmd { return m.apply(m.eng.Start()) }
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.apply(m.eng.Start())}
+	for id, d := range m.eng.RefreshIntervals() {
+		cmds = append(cmds, m.every(d, refreshMsg{id: id, every: d}))
+	}
+	return tea.Batch(cmds...)
+}
+
+// refreshMsg is a panel's auto-refresh timer firing.
+type refreshMsg struct {
+	id    string
+	every time.Duration
+}
 
 // apply carries out engine effects: kills cancelled runs, starts new ones
 // (reporting back with finishedMsg or streamMsg) and schedules the debounced settle.
@@ -133,6 +149,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.apply(m.eng.Finished(msg.id, msg.stdout, msg.err))
 	case settleMsg:
 		return m, m.apply(m.eng.Settle(msg.id))
+	case refreshMsg: // re-run the panel if it's on screen and idle, then wait again
+		return m, tea.Batch(m.apply(m.eng.AutoRefresh(msg.id)), m.every(msg.every, msg))
 	case streamMsg:
 		m.eng.StreamData(msg.id, msg.data)
 		if msg.done {

@@ -752,8 +752,11 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	if rp.Refresh != "" {
 		r, err := time.ParseDuration(rp.Refresh)
-		if err != nil || r <= 0 {
+		switch {
+		case err != nil || r <= 0:
 			v.errorf(at("refresh"), "%s: refresh: invalid duration %q", what, rp.Refresh)
+		case r < time.Second:
+			v.errorf(at("refresh"), "%s: refresh: %s is too often (minimum 1s)", what, rp.Refresh)
 		}
 		p.Refresh = r
 	}

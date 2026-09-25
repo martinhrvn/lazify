@@ -83,5 +83,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] selects: `select: popup` (dialog) or `select: inline` (in place), never both
 - [ ] later: search in content panels; fuzzy matching
 
-## M5 — auto-refresh (columns ✅, context ✅ as select panels, filter ✅)
+## M5 ✅ — auto-refresh (columns, context as select panels, filter: done earlier)
+- [x] `refresh: <interval>` re-runs a panel while it's on screen and idle; quiet, cursor kept by key
+- [x] minimum 1s; timers live in the UI (`refreshMsg`), the engine decides (`AutoRefresh`)
+- [ ] later: pause refreshing while the terminal is unfocused; per-content-tab refresh
 ## M6 — example definitions (git-lite, cloudwatch, ecs)
