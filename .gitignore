@@ -1,0 +1,4 @@
+/bin/
+/lazify
+.devenv/
+.direnv/

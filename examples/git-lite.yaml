@@ -1,0 +1,32 @@
+name: git-lite
+panels:
+  - id: branches
+    title: Branches
+    source: git branch --format='%(refname:short)'     # plain lines → rows {line}
+  - id: commits
+    title: Commits
+    source: git log --format='%h%x09%s' {{branches.line}}
+    split: "\t"                                        # line → fields[0], fields[1]
+    label: "{{.fields.0}} {{.fields.1}}"
+    key: .fields.0
+    children: files                                    # Enter drills in
+  - id: files
+    title: Files
+    source: git show --name-only --format= {{commits.fields.0}}
+
+detail:
+  commits:
+    tabs:
+      - name: Diff
+        cmd: git show --color=always {{.fields.0}}
+  files:
+    tabs:
+      - name: Diff
+        cmd: git show --color=always {{commits.fields.0}} -- {{.line}}
+
+actions:
+  branches:
+    - key: space
+      desc: Checkout
+      cmd: git checkout {{.line}}
+      refresh: [branches, commits]

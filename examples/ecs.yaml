@@ -1,0 +1,71 @@
+name: lazyecs
+context:
+  profile: { source: aws configure list-profiles, default: default }
+  region:  { values: [eu-west-1, eu-central-1, us-east-1], default: eu-west-1 }
+env:
+  AWS_PROFILE: "{{ctx.profile}}"
+  AWS_REGION:  "{{ctx.region}}"
+
+panels:
+  - id: clusters
+    title: Clusters
+    source: >
+      aws ecs describe-clusters --output json
+      --clusters $(aws ecs list-clusters --query clusterArns --output text)
+    rows: .clusters[]
+    key: .clusterArn
+    label: "{{.clusterName}}"
+
+  - id: services
+    title: Services
+    source: >
+      aws ecs describe-services --cluster {{clusters.clusterArn}} --output json
+      --services $(aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text)
+    rows: .services[]
+    key: .serviceArn
+    columns:
+      - { title: Service, value: "{{.serviceName}}" }
+      - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
+      - { title: Status,  value: "{{.status}}" }
+    refresh: 10s
+
+  - id: tasks
+    title: Tasks
+    source: >
+      aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json
+      --tasks $(aws ecs list-tasks --cluster {{clusters.clusterArn}}
+               --service-name {{services.serviceName}} --query taskArns --output text)
+    rows: .tasks[]
+    key: .taskArn
+    columns:
+      - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
+      - { title: Status, value: "{{.lastStatus}}" }
+
+detail:
+  services:
+    tabs:
+      - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
+      - { name: JSON,   cmd: "echo {{.}}", format: json }
+  tasks:
+    tabs:
+      - name: Logs
+        mode: stream
+        cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
+
+actions:
+  services:
+    - key: D
+      desc: Force new deployment
+      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
+      confirm: true
+      refresh: [services, tasks]
+    - key: s
+      desc: Scale
+      prompt: Desired count
+      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
+      refresh: [services]
+  tasks:
+    - key: e
+      desc: Exec shell
+      mode: interactive          # suspends the TUI, gives the terminal to the command
+      cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh
