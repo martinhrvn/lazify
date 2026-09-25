@@ -22,7 +22,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] cache by rendered command; stale-while-refreshing; errors not cached
 - [x] wait for all inputs to settle (diamonds run once); drill-in children don't run until opened
 - [ ] later: bound the cache (LRU) — currently unbounded
-## M3 — detail view
+## M3 — detail view ✅
+- [x] tabs for the focused panel (`[`/`]`), active tab remembered per panel
+- [x] `once` tabs: cached by command, debounced on cursor moves, `format: json`, errors shown
+- [x] `stream` tabs (live tail): incremental output, 10k-line buffer, killed on change, `r` restarts
+- [x] scrolling (`J`/`K`, `ctrl+d`/`ctrl+u`), follow mode for streams; reusable `ui/viewport.go`
+- [ ] later: search in the main view, `g`/`G` top/bottom, wrap long lines toggle
 ## M4 — actions
 ## Enter on a row — popup or drill-down
 Each panel can bind Enter to one of two behaviours. Esc always goes back one level.

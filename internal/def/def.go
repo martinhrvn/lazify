@@ -112,8 +112,9 @@ type Detail struct {
 type Tab struct {
 	Name   string
 	Cmd    *tmpl.Template
-	Mode   string // once | stream
-	Format string // text | json
+	Mode   string   // once | stream
+	Format string   // text | json
+	Deps   []string // panels referenced in Cmd (besides the row itself)
 }
 
 // Action is a key bound on a panel.
@@ -610,13 +611,15 @@ func (v *validator) build(raw *rawDef) *Definition {
 			if rt.Cmd == "" {
 				v.errorf(tl, "%s: cmd is required", what)
 			} else {
-				tab.Cmd, _ = v.template(tl, what, rt.Cmd, d, refRules{row: true, panels: true})
+				tab.Cmd, tab.Deps = v.template(tl, what, rt.Cmd, d, refRules{row: true, panels: true})
 			}
 			if tab.Mode != "once" && tab.Mode != "stream" {
 				v.errorf(tl, "%s: mode must be once or stream, got %q", what, tab.Mode)
 			}
 			if tab.Format != "text" && tab.Format != "json" {
 				v.errorf(tl, "%s: format must be text or json, got %q", what, tab.Format)
+			} else if tab.Format == "json" && tab.Mode == "stream" {
+				v.errorf(tl, "%s: format json is only supported with mode once", what)
 			}
 			det.Tabs = append(det.Tabs, tab)
 		}

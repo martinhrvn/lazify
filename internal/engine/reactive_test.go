@@ -17,7 +17,8 @@ panels:
   - {id: files, source: "git show {{commits.fields.0}}"}
 `
 
-// harness tracks in-flight runs by panel so tests can finish them by name.
+// harness tracks in-flight runs by panel so tests can finish them by name. The
+// detail view's run is tracked under "detail".
 type harness struct {
 	t        *testing.T
 	e        *Engine
@@ -43,10 +44,14 @@ func (h *harness) apply(fx Effects) {
 		}
 	}
 	for _, r := range fx.Runs {
-		if old, ok := h.inflight[r.Panel]; ok {
-			h.t.Fatalf("%s started run %q while %q still in flight and not cancelled", r.Panel, r.Req.Cmd, old.Req.Cmd)
+		slot := r.Panel
+		if r.Detail {
+			slot = "detail"
 		}
-		h.inflight[r.Panel] = r
+		if old, ok := h.inflight[slot]; ok {
+			h.t.Fatalf("%s started run %q while %q still in flight and not cancelled", slot, r.Req.Cmd, old.Req.Cmd)
+		}
+		h.inflight[slot] = r
 		h.ran = append(h.ran, r.Req.Cmd)
 	}
 	if fx.Settle != 0 {
@@ -75,7 +80,7 @@ func (h *harness) cmd(panel string) string {
 }
 
 func (h *harness) move(panel string, delta int) {
-	h.e.FocusPanel(panel)
+	h.apply(h.e.FocusPanel(panel))
 	h.apply(h.e.Move(delta))
 }
 

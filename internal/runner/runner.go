@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -50,6 +51,9 @@ func (e *ExitError) Error() string {
 // Runner runs commands. The TUI and engine depend on this so tests can fake it.
 type Runner interface {
 	Run(ctx context.Context, req Request) (Result, error)
+	// Stream runs req until it exits or ctx is cancelled, passing stdout and
+	// stderr to onData as they arrive. Request.Timeout is ignored.
+	Stream(ctx context.Context, req Request, onData func([]byte)) error
 }
 
 // Shell runs commands with /bin/sh.
@@ -64,8 +68,31 @@ func (Shell) Run(ctx context.Context, req Request) (Result, error) {
 		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
+	cmd := command(runCtx, req)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	res := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	if err != nil && runCtx.Err() != nil && ctx.Err() == nil {
+		return res, ErrTimeout
+	}
+	return res, exitErr(ctx, err, stderr.String())
+}
 
-	cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", req.Cmd)
+// Stream implements Runner.
+func (Shell) Stream(ctx context.Context, req Request, onData func([]byte)) error {
+	cmd := command(ctx, req)
+	w := &chunkWriter{onData: onData}
+	cmd.Stdout = w
+	cmd.Stderr = w
+	return exitErr(ctx, cmd.Run(), "")
+}
+
+// command builds an `sh -c` command in its own process group, so cancelling
+// ctx kills the whole pipeline.
+func command(ctx context.Context, req Request) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", req.Cmd)
 	cmd.Dir = req.Dir
 	cmd.Env = os.Environ()
 	for k, v := range req.Env {
@@ -77,23 +104,33 @@ func (Shell) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	// Don't hang on grandchildren that somehow keep the output pipes open.
 	cmd.WaitDelay = time.Second
+	return cmd
+}
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	res := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
-
+// exitErr maps a finished command's error to ctx.Err() or *ExitError.
+func exitErr(ctx context.Context, err error, stderr string) error {
 	switch {
 	case err == nil:
-		return res, nil
+		return nil
 	case ctx.Err() != nil:
-		return res, ctx.Err()
-	case runCtx.Err() != nil:
-		return res, ErrTimeout
+		return ctx.Err()
 	}
 	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-		return res, &ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
+		return &ExitError{Code: ee.ExitCode(), Stderr: stderr}
 	}
-	return res, err
+	return err
+}
+
+// chunkWriter forwards copies of written chunks; stdout and stderr share one,
+// so writes are serialised.
+type chunkWriter struct {
+	mu     sync.Mutex
+	onData func([]byte)
+}
+
+func (w *chunkWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onData(bytes.Clone(p))
+	return len(p), nil
 }

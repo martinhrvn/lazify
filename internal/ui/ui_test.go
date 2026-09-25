@@ -3,8 +3,10 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -14,11 +16,22 @@ import (
 	"github.com/martinhrvn/lazify/internal/runner"
 )
 
-// fakeRunner returns canned output per command.
+// fakeRunner returns canned output per command; streams emit their chunks and exit.
 type fakeRunner struct {
-	out  map[string]string
-	errs map[string]error
-	ran  []string
+	out     map[string]string
+	errs    map[string]error
+	streams map[string][]string
+	gap     time.Duration // pause between stream chunks
+	ran     []string
+}
+
+func (f *fakeRunner) Stream(_ context.Context, req runner.Request, onData func([]byte)) error {
+	f.ran = append(f.ran, req.Cmd)
+	for _, c := range f.streams[req.Cmd] {
+		time.Sleep(f.gap)
+		onData([]byte(c))
+	}
+	return f.errs[req.Cmd]
 }
 
 func (f *fakeRunner) Run(_ context.Context, req runner.Request) (runner.Result, error) {
@@ -62,6 +75,10 @@ func key(t *testing.T, m tea.Model, k string) tea.Model {
 		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "down":
 		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "ctrl+d":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+u":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
@@ -347,5 +364,128 @@ func TestCancelledRunsAreKilled(t *testing.T) {
 	}
 	if _, ok := m.cancels[42]; ok {
 		t.Error("cancel func not forgotten")
+	}
+}
+
+const detailUIDef = `
+panels:
+  - {id: commits, title: Commits, source: git log}
+detail:
+  commits:
+    tabs:
+      - {name: Diff, cmd: "git show {{.line}}"}
+      - {name: Stat, cmd: "git stat {{.line}}"}
+      - {name: Tail, cmd: "tail {{.line}}", mode: stream}
+`
+
+func numbered(prefix string, n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "%s %d\n", prefix, i)
+	}
+	return b.String()
+}
+
+// mainLines returns the main view's content lines (between its borders).
+func mainLines(t *testing.T, m tea.Model) []string {
+	t.Helper()
+	var out []string
+	for _, l := range strings.Split(screen(m), "\n") {
+		parts := strings.Split(l, "│")
+		if len(parts) >= 4 { // │left│ │main│
+			out = append(out, strings.TrimRight(parts[3], " "))
+		}
+	}
+	return out
+}
+
+func TestDetailTabs(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{
+		"git log":     "a1\n",
+		"git show a1": "diff for a1\n",
+		"git stat a1": "stat for a1\n",
+	}}
+	m := start(t, detailUIDef, r)
+	s := screen(m)
+	for _, want := range []string{"Diff", "Stat", "Tail", "diff for a1"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q:\n%s", want, s)
+		}
+	}
+	m = key(t, m, "]")
+	if s := screen(m); !strings.Contains(s, "stat for a1") || strings.Contains(s, "diff for a1") {
+		t.Errorf("] did not switch tab:\n%s", s)
+	}
+	m = key(t, m, "[")
+	if s := screen(m); !strings.Contains(s, "diff for a1") {
+		t.Errorf("[ did not switch back:\n%s", s)
+	}
+}
+
+func TestDetailScrolls(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"git log": "a1\n", "git show a1": numbered("line", 100)}}
+	m := start(t, detailUIDef, r)
+	if got := mainLines(t, m)[0]; got != "line 0" {
+		t.Fatalf("first line = %q", got)
+	}
+	m = key(t, m, "J")
+	if got := mainLines(t, m)[0]; got != "line 1" {
+		t.Errorf("after J first line = %q", got)
+	}
+	m = key(t, m, "ctrl+d")
+	if got := mainLines(t, m)[0]; got != "line 14" { // 27 visible lines → half page 13
+		t.Errorf("after ctrl+d first line = %q", got)
+	}
+	m = key(t, m, "K")
+	m = key(t, m, "ctrl+u")
+	if got := mainLines(t, m)[0]; got != "line 0" {
+		t.Errorf("after scrolling back first line = %q", got)
+	}
+}
+
+func TestStreamTabFollowsTail(t *testing.T) {
+	r := &fakeRunner{
+		out:     map[string]string{"git log": "a1\n"},
+		streams: map[string][]string{"tail a1": {numbered("log", 30), numbered("more", 20)}},
+	}
+	m := start(t, detailUIDef, r)
+	m = key(t, m, "[") // Diff → Tail
+	ls := mainLines(t, m)
+	if last := ls[len(ls)-1]; last != "more 19" {
+		t.Errorf("stream not following the tail, last line %q", last)
+	}
+	if s := screen(m); !strings.Contains(s, "ended") {
+		t.Errorf("finished stream should say ended:\n%s", s)
+	}
+	m = key(t, m, "K")
+	ls = mainLines(t, m)
+	if last := ls[len(ls)-1]; last != "more 18" {
+		t.Errorf("K should scroll up one line, last line %q", last)
+	}
+}
+
+func TestDetailShowsErrors(t *testing.T) {
+	r := &fakeRunner{
+		out:  map[string]string{"git log": "a1\n"},
+		errs: map[string]error{"git show a1": errors.New("exit status 128: bad revision")},
+	}
+	if s := screen(start(t, detailUIDef, r)); !strings.Contains(s, "bad revision") {
+		t.Errorf("detail error not shown:\n%s", s)
+	}
+}
+
+func TestStreamKeepsDeliveringAfterFirstChunk(t *testing.T) {
+	r := &fakeRunner{
+		out:     map[string]string{"git log": "a1\n"},
+		streams: map[string][]string{"tail a1": {"first\n", "second\n", "third\n"}},
+		gap:     20 * time.Millisecond, // separate batches, like a real tail
+	}
+	m := start(t, detailUIDef, r)
+	m = key(t, m, "[")
+	s := screen(m)
+	for _, want := range []string{"first", "second", "third"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing streamed line %q:\n%s", want, s)
+		}
 	}
 }

@@ -1,0 +1,15 @@
+name: tail
+# Live-tail log files under the current directory.
+panels:
+  - id: files
+    title: Log files
+    source: find . -maxdepth 3 -name '*.log' -type f | sort
+
+detail:
+  files:
+    tabs:
+      - name: Tail
+        mode: stream                       # runs until you move away; output follows the end
+        cmd: tail -n 200 -F {{.line}}
+      - name: Head
+        cmd: head -n 200 {{.line}}

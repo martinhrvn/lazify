@@ -24,9 +24,11 @@ const Debounce = 150 * time.Millisecond
 
 // Run asks the caller to execute a command and report it via Finished(ID, ...).
 type Run struct {
-	ID    uint64
-	Panel string
-	Req   runner.Request
+	ID     uint64
+	Panel  string // the panel it is for (for a detail run: the focused panel)
+	Detail bool   // a detail tab command rather than a panel source
+	Stream bool   // long-running: use Runner.Stream and report chunks via StreamData
+	Req    runner.Request
 }
 
 // Effects is what the caller must do after an engine call.
@@ -72,7 +74,10 @@ type Engine struct {
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
 	cache    map[string][]rows.Row
-	focus    int // index into TopLevel()
+	detail   detailState
+	tabIdx   map[string]int      // active detail tab per panel
+	dcache   map[string][]string // once-tab output by rendered command
+	focus    int                 // index into TopLevel()
 	nextID   uint64
 	settleID uint64
 	fx       Effects // accumulated by the current call
@@ -85,6 +90,8 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 		ctx:    map[string]string{},
 		panels: map[string]*panelState{},
 		cache:  map[string][]rows.Row{},
+		tabIdx: map[string]int{},
+		dcache: map[string][]string{},
 	}
 	for name, cv := range d.Context {
 		e.ctx[name] = cv.Default
@@ -112,11 +119,16 @@ func (e *Engine) Start() Effects {
 	for _, id := range e.def.Order {
 		e.evaluate(e.panels[id], true)
 	}
+	e.evaluateDetail(true)
 	return e.take()
 }
 
 // Finished applies a run's result. Results of superseded runs are ignored.
 func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
+	if id != 0 && id == e.detail.runID {
+		e.detailFinished(stdout, runErr)
+		return e.take()
+	}
 	var ps *panelState
 	for _, p := range e.panels {
 		if id != 0 && p.runID == id {
@@ -137,6 +149,7 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 		e.setRows(ps, cmd, parsed)
 	}
 	e.propagate(ps.def.ID, true)
+	e.evaluateDetail(true)
 	return e.take()
 }
 
@@ -148,6 +161,7 @@ func (e *Engine) Settle(id uint64) Effects {
 	for _, pid := range e.def.Order {
 		e.evaluate(e.panels[pid], true)
 	}
+	e.evaluateDetail(true)
 	return e.take()
 }
 
@@ -163,8 +177,12 @@ func (e *Engine) Move(delta int) Effects {
 		return e.take()
 	}
 	ps.cursor = cursor
-	if len(e.def.Dependents(ps.def.ID)) > 0 {
+	hasDeps := len(e.def.Dependents(ps.def.ID)) > 0
+	if hasDeps {
 		e.propagate(ps.def.ID, false)
+	}
+	e.evaluateDetail(false)
+	if hasDeps || len(e.tabs(ps.def.ID)) > 0 {
 		e.settleID++
 		e.fx.Settle = e.settleID
 	}
@@ -180,6 +198,7 @@ func (e *Engine) Refresh() Effects {
 	if cmd, ok := e.render(ps); ok {
 		e.start(ps, cmd)
 	}
+	e.refreshDetail()
 	return e.take()
 }
 
@@ -340,19 +359,25 @@ func (e *Engine) TopLevel() []string {
 func (e *Engine) Focused() string { return e.TopLevel()[e.focus] }
 
 // FocusNext focuses the next top-level panel, wrapping around.
-func (e *Engine) FocusNext() { e.focus = (e.focus + 1) % len(e.TopLevel()) }
+func (e *Engine) FocusNext() Effects { return e.setFocus(e.focus + 1) }
 
 // FocusPrev focuses the previous top-level panel, wrapping around.
-func (e *Engine) FocusPrev() {
-	n := len(e.TopLevel())
-	e.focus = (e.focus - 1 + n) % n
-}
+func (e *Engine) FocusPrev() Effects { return e.setFocus(e.focus - 1) }
 
 // FocusPanel focuses a top-level panel by id.
-func (e *Engine) FocusPanel(id string) {
+func (e *Engine) FocusPanel(id string) Effects {
 	if i := slices.Index(e.TopLevel(), id); i >= 0 {
-		e.focus = i
+		return e.setFocus(i)
 	}
+	return e.take()
+}
+
+// setFocus focuses TopLevel()[i] (wrapping) and shows its detail at once.
+func (e *Engine) setFocus(i int) Effects {
+	n := len(e.TopLevel())
+	e.focus = ((i % n) + n) % n
+	e.evaluateDetail(true)
+	return e.take()
 }
 
 // View renders a panel for display.

@@ -25,6 +25,10 @@ panels:
     side: right                                        # right of the main view
 
 detail:
+  branches:
+    tabs:
+      - name: Log
+        cmd: git log --oneline --graph --color=always {{.line}}
   commits:
     tabs:
       - name: Diff

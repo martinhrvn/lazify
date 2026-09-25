@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -129,4 +130,81 @@ func atoi(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// collector gathers stream chunks safely.
+type collector struct {
+	mu  sync.Mutex
+	buf strings.Builder
+	n   int
+}
+
+func (c *collector) add(b []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.buf.Write(b)
+	c.n++
+}
+
+func (c *collector) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+func TestStreamDeliversStdoutAndStderr(t *testing.T) {
+	var c collector
+	err := Shell{}.Stream(context.Background(), Request{Cmd: "echo one; sleep 0.05; echo two >&2; sleep 0.05; echo three"}, c.add)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.String(); got != "one\ntwo\nthree\n" {
+		t.Errorf("stream = %q", got)
+	}
+	if c.n < 3 {
+		t.Errorf("want output delivered incrementally, got %d chunks", c.n)
+	}
+}
+
+func TestStreamDeliversBeforeExit(t *testing.T) {
+	var c collector
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Shell{}.Stream(ctx, Request{Cmd: "echo first; sleep 30"}, c.add) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for c.String() != "first\n" {
+		if time.Now().After(deadline) {
+			t.Fatal("no output before exit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stream did not return after cancel")
+	}
+}
+
+func TestStreamExitError(t *testing.T) {
+	var c collector
+	err := Shell{}.Stream(context.Background(), Request{Cmd: "echo oops >&2; exit 4"}, c.add)
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != 4 {
+		t.Fatalf("err = %v, want exit 4", err)
+	}
+	if c.String() != "oops\n" {
+		t.Errorf("stderr should be streamed, got %q", c.String())
+	}
+}
+
+func TestStreamIgnoresTimeout(t *testing.T) {
+	var c collector
+	err := Shell{}.Stream(context.Background(), Request{Cmd: "sleep 0.2; echo late", Timeout: 50 * time.Millisecond}, c.add)
+	if err != nil || c.String() != "late\n" {
+		t.Errorf("streams must not time out: %v %q", err, c.String())
+	}
 }

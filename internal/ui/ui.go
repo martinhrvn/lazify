@@ -20,13 +20,15 @@ import (
 )
 
 var (
-	colorFocus  = lipgloss.Color("2")
-	colorBorder = lipgloss.Color("8")
-	styleCursor = lipgloss.NewStyle().Reverse(true)
-	styleDim    = lipgloss.NewStyle().Faint(true)
-	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	styleHeader = lipgloss.NewStyle().Bold(true)
-	styleHint   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	colorFocus     = lipgloss.Color("2")
+	colorBorder    = lipgloss.Color("8")
+	styleCursor    = lipgloss.NewStyle().Reverse(true)
+	styleDim       = lipgloss.NewStyle().Faint(true)
+	styleErr       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleHeader    = lipgloss.NewStyle().Bold(true)
+	styleHint      = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleTabActive = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleLive      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 )
 
 // Model is the root Bubble Tea model.
@@ -35,6 +37,9 @@ type Model struct {
 	eng      *engine.Engine
 	runner   runner.Runner
 	cancels  map[uint64]context.CancelFunc
+	streams  map[uint64]<-chan streamEvent
+	vp       *viewport // main view scroll; pointer so View can apply follow
+	vpID     string    // DetailView.ID the viewport belongs to
 	debounce time.Duration
 	width    int
 	height   int
@@ -55,6 +60,8 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		eng:      engine.New(d, ctx),
 		runner:   r,
 		cancels:  map[uint64]context.CancelFunc{},
+		streams:  map[uint64]<-chan streamEvent{},
+		vp:       &viewport{},
 		debounce: engine.Debounce,
 	}
 }
@@ -62,12 +69,13 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 func (m Model) Init() tea.Cmd { return m.apply(m.eng.Start()) }
 
 // apply carries out engine effects: kills cancelled runs, starts new ones
-// (reporting back with finishedMsg) and schedules the debounced settle.
+// (reporting back with finishedMsg or streamMsg) and schedules the debounced settle.
 func (m Model) apply(fx engine.Effects) tea.Cmd {
 	for _, id := range fx.Cancel {
 		if cancel, ok := m.cancels[id]; ok {
 			cancel()
 			delete(m.cancels, id)
+			delete(m.streams, id)
 		}
 	}
 	var cmds []tea.Cmd
@@ -77,6 +85,10 @@ func (m Model) apply(fx engine.Effects) tea.Cmd {
 	for _, r := range fx.Runs {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancels[r.ID] = cancel
+		if r.Stream {
+			cmds = append(cmds, m.startStream(ctx, r))
+			continue
+		}
 		cmds = append(cmds, func() tea.Msg {
 			res, err := m.runner.Run(ctx, r.Req)
 			return finishedMsg{id: r.ID, stdout: res.Stdout, err: err}
@@ -86,6 +98,12 @@ func (m Model) apply(fx engine.Effects) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	next.syncViewport()
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -97,13 +115,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.apply(m.eng.Finished(msg.id, msg.stdout, msg.err))
 	case settleMsg:
 		return m, m.apply(m.eng.Settle(msg.id))
+	case streamMsg:
+		m.eng.StreamData(msg.id, msg.data)
+		if msg.done {
+			if cancel, ok := m.cancels[msg.id]; ok {
+				cancel()
+				delete(m.cancels, msg.id)
+			}
+			delete(m.streams, msg.id)
+			return m, m.apply(m.eng.Finished(msg.id, nil, msg.err))
+		}
+		if ch, ok := m.streams[msg.id]; ok {
+			return m, waitStream(msg.id, ch)
+		}
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
 	return m, nil
 }
 
-func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	k := msg.String()
 	switch k {
 	case "q", "ctrl+c":
@@ -116,14 +147,26 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		return m, m.apply(m.eng.Move(-1))
 	case "tab":
-		m.eng.FocusNext()
+		return m, m.apply(m.eng.FocusNext())
 	case "shift+tab":
-		m.eng.FocusPrev()
+		return m, m.apply(m.eng.FocusPrev())
+	case "]":
+		return m, m.apply(m.eng.NextTab())
+	case "[":
+		return m, m.apply(m.eng.PrevTab())
+	case "J":
+		m.scrollMain(1)
+	case "K":
+		m.scrollMain(-1)
+	case "ctrl+d":
+		m.scrollMain(m.mainHeight() / 2)
+	case "ctrl+u":
+		m.scrollMain(-m.mainHeight() / 2)
 	case "r":
 		return m, m.apply(m.eng.Refresh())
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if i := int(k[0] - '1'); i < len(m.eng.TopLevel()) {
-			m.eng.FocusPanel(m.eng.TopLevel()[i])
+			return m, m.apply(m.eng.FocusPanel(m.eng.TopLevel()[i]))
 		}
 	}
 	return m, nil
@@ -257,18 +300,88 @@ func (m Model) panelLines(id string, w, h int) []string {
 	return out
 }
 
-// mainView shows the focused panel's selected row. Detail tabs come in M3.
+// mainView draws the focused panel's detail: a tab bar in the title and the
+// active tab's output, scrolled by the viewport.
 func (m Model) mainView(w, h int) string {
-	var lines []string
-	if sel, ok := m.eng.Selection(m.eng.Focused()); ok {
-		b, _ := json.MarshalIndent(sel, "", "  ")
-		lines = strings.Split(string(b), "\n")
+	inner := max(0, h-2)
+	title, head, body, stale := m.mainContent()
+	shown := m.vp.window(body, max(0, inner-len(head)))
+	lines := slices.Clone(head)
+	for _, l := range shown {
+		if stale {
+			l = styleDim.Render(ansi.Strip(l))
+		}
+		lines = append(lines, l)
 	}
-	return clip(box("Main", lines, w, max(0, h-2), false), w, h)
+	return clip(box(title, lines, w, inner, false), w, h)
+}
+
+// mainContent splits the main view into its title, fixed head lines (errors,
+// placeholders) and the scrollable body.
+func (m Model) mainContent() (title string, head, body []string, stale bool) {
+	v := m.eng.DetailView()
+	if len(v.Tabs) == 0 {
+		if !v.HasRow {
+			return "Main", []string{styleDim.Render(v.Empty)}, nil, false
+		}
+		b, _ := json.MarshalIndent(v.Row, "", "  ")
+		return "Main", nil, strings.Split(string(b), "\n"), false
+	}
+
+	tabs := make([]string, len(v.Tabs))
+	for i, t := range v.Tabs {
+		if i == v.Active {
+			tabs[i] = styleTabActive.Render(t)
+		} else {
+			tabs[i] = t
+		}
+	}
+	title = strings.Join(tabs, " │ ")
+	switch {
+	case v.Live:
+		title += styleLive.Render(" ● live")
+	case v.Ended:
+		title += styleDim.Render(" ended")
+	}
+
+	if v.Err != "" {
+		errLines := strings.Split(strings.TrimSpace(v.Err), "\n")
+		for _, l := range errLines[:min(len(errLines), 5)] {
+			head = append(head, styleErr.Render(l))
+		}
+	}
+	if len(v.Lines) == 0 {
+		switch {
+		case v.Loading:
+			head = append(head, styleDim.Render("loading…"))
+		case v.Empty != "":
+			head = append(head, styleDim.Render(v.Empty))
+		case v.Err == "" && !v.Live:
+			head = append(head, styleDim.Render("(no output)"))
+		}
+	}
+	return title, head, v.Lines, v.Stale
+}
+
+// mainHeight is the number of content lines inside the main box.
+func (m Model) mainHeight() int { return max(1, m.height-1-2) }
+
+func (m Model) scrollMain(delta int) {
+	_, head, body, _ := m.mainContent()
+	m.vp.scroll(delta, len(body), max(1, m.mainHeight()-len(head)))
+}
+
+// syncViewport resets scrolling when the main view shows different content:
+// streams start following the tail, everything else starts at the top.
+func (m *Model) syncViewport() {
+	if v := m.eng.DetailView(); v.ID != m.vpID {
+		m.vpID = v.ID
+		m.vp.reset(v.Live)
+	}
 }
 
 func (m Model) statusLine() string {
-	hints := []string{"j/k move", "tab focus", "r refresh", "q quit"}
+	hints := []string{"j/k move", "tab focus", "[/] detail tab", "J/K ctrl+d/u scroll", "r refresh", "q quit"}
 	return ansi.Truncate(styleHint.Render(strings.Join(hints, " · ")), m.width, "…")
 }
 
@@ -283,12 +396,14 @@ func box(title string, lines []string, w, h int, focused bool) string {
 	innerW := max(0, w-2)
 
 	title = ansi.Truncate(" "+title+" ", max(0, innerW-1), "…")
-	top := "╭─" + title + strings.Repeat("─", max(0, innerW-1-ansi.StringWidth(title))) + "╮"
+	ts := bs
 	if focused {
-		top = bs.Bold(true).Render(top)
-	} else {
-		top = bs.Render(top)
+		ts = bs.Bold(true)
 	}
+	// Style the pieces separately: a title with its own ANSI styling (the tab
+	// bar) would otherwise reset the colour of the border after it.
+	top := bs.Render("╭─") + ts.Render(title) +
+		bs.Render(strings.Repeat("─", max(0, innerW-1-ansi.StringWidth(title)))+"╮")
 
 	var b strings.Builder
 	b.WriteString(top)

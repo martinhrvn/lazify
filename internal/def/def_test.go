@@ -160,6 +160,7 @@ func TestValidationErrors(t *testing.T) {
 		{"tab without cmd", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n}]}", "cmd is required"},
 		{"tab bad mode", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, mode: loop}]}", "mode"},
 		{"tab bad format", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, format: xml}]}", "format"},
+		{"json stream", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, mode: stream, format: json}]}", "format json is only supported with mode once"},
 		{"tab unknown ref", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: 'c {{z.q}}'}]}", "unknown panel \"z\""},
 		{"action unknown panel", "panels: [{id: a, source: x}]\nactions:\n  b: [{key: x, cmd: c}]", "actions: unknown panel \"b\""},
 		{"action no key", "panels: [{id: a, source: x}]\nactions:\n  a: [{cmd: c}]", "key is required"},
@@ -321,5 +322,18 @@ func TestLayoutValidation(t *testing.T) {
 				t.Errorf("error %v\ndoes not contain %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestTabDeps(t *testing.T) {
+	d, err := Load("../../examples/git-lite.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Detail["files"].Tabs[0].Deps; !reflect.DeepEqual(got, []string{"commits"}) {
+		t.Errorf("files tab deps = %v", got)
+	}
+	if got := d.Detail["commits"].Tabs[0].Deps; got != nil {
+		t.Errorf("commits tab deps = %v, want none (only row refs)", got)
 	}
 }

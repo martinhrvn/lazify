@@ -219,8 +219,13 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 4. **Cache** by *rendered command string* (env is fixed per session; context changes clear it). Errors are not cached. Revisiting a selection shows cached rows
    instantly; `r` or the `refresh` interval re-runs. While re-running, old rows are shown
    **dimmed (stale)** rather than blanked.
-5. Detail tabs follow the same rules keyed on the focused panel's selection; only the
-   visible tab runs. `stream` tabs are killed when the selection or tab changes.
+5. **Detail tabs** follow the same rules, keyed on the focused panel's selection (plus any
+   panels the tab's `cmd` references); only the visible tab runs. Cursor moves use the cache or
+   wait for the debounce; focus and tab changes run at once. `once` output is cached by command
+   (`format: json` pretty-prints it). `stream` tabs (live tail) run without a timeout, merge
+   stdout+stderr, keep the last 10 000 lines, are never cached, and are killed (process group)
+   when the selection, tab or focus changes; `r` restarts them. A panel without `detail:` shows
+   its selected row as JSON.
 6. Context change invalidates the whole cache and re-runs roots.
 7. Commands have a timeout (default 30 s, configurable); streams have none.
 
@@ -229,7 +234,9 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 - Columns: `[left panels][main][right panels]`. Panels go left unless `side: right`; with no
   right panels the layout is `[left][main]`. Within a column panels stack in declaration order.
   A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`).
-- Main view = tab bar + scrollable viewport (ANSI passthrough) for the focused row. It gets the
+- Main view = tab bar + scrollable viewport (ANSI passthrough) for the focused row. Streams
+  follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
+  Tabs expand to 4 spaces and `\r` progress lines keep only their final state. It gets the
   width left over by the side columns (min 10 columns, otherwise the left column takes it).
 - Panel numbers, `tab` order and `1..9` follow the screen: left column top→bottom, then right.
 - Bottom line: key hints for the focused panel's actions + status/errors.
