@@ -502,7 +502,7 @@ func box(title string, lines []string, w, h int, focused bool) string {
 	}
 	// Style the pieces separately: a title with its own ANSI styling (the tab
 	// bar) would otherwise reset the colour of the border after it.
-	top := bs.Render("╭─") + ts.Render(title) +
+	top := bs.Render("╭─") + within(ts, title) +
 		bs.Render(strings.Repeat("─", max(0, innerW-1-ansi.StringWidth(title)))+"╮")
 
 	var b strings.Builder

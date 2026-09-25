@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/martinhrvn/lazify/internal/engine"
@@ -69,4 +70,18 @@ func (m Model) tabBar(tabs []string, active string) string {
 		}
 	}
 	return strings.Join(parts, " │ ")
+}
+
+// within renders s in style st even when s has styled parts of its own (an
+// underlined tab, a coloured "● live"). Each inner part ends with a reset that
+// would switch st off for the rest of s — and lipgloss underlines one
+// character at a time, so only the first letter kept st — so st is re-applied
+// after every reset.
+func within(st lipgloss.Style, s string) string {
+	const reset = "\x1b[0m"
+	open := strings.TrimSuffix(st.Render("x"), "x"+reset)
+	if open == "" || open == "x" {
+		return st.Render(s) // no styling (e.g. not a terminal)
+	}
+	return open + strings.ReplaceAll(s, reset, reset+open) + reset
 }
