@@ -35,6 +35,7 @@ See `docs/design.md` §11 for milestone scope.
 - [x] content panels are focusable (`j/k` scroll); `[`/`]`, `J/K`, `ctrl+d/u` act on the focused or first one
 - [x] `detail:` gives a migration error
 - [ ] later: shorthand for single-tab entries (`commits: {cmd: ...}`)
+- [ ] later: panel/tab **options** the user picks at run time, passed to the command as `{{opt.x}}` — e.g. a log tab's from/to window (the ECS example hardcodes `--since 1h`)
 - [ ] later: tab names optional when there is one tab (title from the panel)
 
 ## M4 — actions ✅

@@ -19,10 +19,12 @@ env:                                     # every command runs with these; they f
     elif [ "$which" = service ]; then set -- --log-stream-name-prefix "$prefix/$name/" "$@"
     else set -- --log-stream-names "$prefix/$name/$which" "$@"
     fi
+    echo "── $group: the last hour, then following (local time) ──"
     aws logs tail "$group" --follow --since 1h --format short "$@" | jq -rR --unbuffered "$ECS_LOG_FORMAT"
   # One line per JSON log event: time LEVEL logger message {extra fields}, with
   # error stacks indented below. Bunyan/pino numeric levels and common string
-  # levels are understood; lines that aren't JSON pass through unchanged.
+  # levels are understood; other lines keep their text. aws prints UTC: times are
+  # shown in local time.
   ECS_LOG_FORMAT: |
     def lvl: if type == "number" then
         (if . >= 60 then "FATAL" elif . >= 50 then "ERROR" elif . >= 40 then "WARN " elif . >= 30 then "INFO "
@@ -35,11 +37,14 @@ env:                                     # every command runs with these; they f
     def indent: "\n    " + (tostring | gsub("\n"; "\n    "));
     (index(" ") // -1) as $i
     | (if $i > 0 then .[:$i] else "" end) as $ts
-    | ((if $i > 0 then .[$i+1:] else . end) | try fromjson catch null) as $j
-    | if ($j | type) != "object" then .
+    | (if $i > 0 then .[$i+1:] else . end) as $line
+    | (try ($ts[:19] + "Z" | fromdateiso8601 | strflocaltime("%H:%M:%S")) catch $ts) as $time
+    | ($line | try fromjson catch null) as $j
+    | if $ts == "" then $line
+      elif ($j | type) != "object" then $time + " " + $line
       else ($j | del(._aws, .hostname, .pid, .v, .time, .timestamp, .level, .severity, .lvl, .name, .logger,
                      .msg, .message, .err, .stack)) as $extra
-      | ($ts | sub("^[0-9-]+T"; "")) + " "
+      | $time + " "
         + ($j.level // $j.severity // $j.lvl | lvl) + " "
         + (($j.name // $j.logger // "") | tostring) + "  "
         + (($j.msg // $j.message // "") | tostring)

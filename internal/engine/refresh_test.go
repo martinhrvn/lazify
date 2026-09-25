@@ -76,3 +76,39 @@ func TestAutoRefreshSkips(t *testing.T) {
 		t.Errorf("detail = %q", got)
 	}
 }
+
+func TestAutoRefreshKeepsDependentStreams(t *testing.T) {
+	src := `
+panels:
+  - {id: services, source: list-services, key: .line, refresh: 10s}
+  - {id: tasks, source: "list-tasks {{services.line}}", key: .line}
+  - id: logs
+    content: {default: {tabs: [{name: Logs, cmd: "tail {{.line}}", mode: stream}]}}
+`
+	h := newHarness(t, src)
+	h.finish("services", "api\nweb\n")
+	h.finish("tasks", "t1\nt2\n")
+	h.focus("tasks")
+	h.doSettle()
+	stream := h.inflight["logs"].ID
+	h.cancel = nil
+	h.apply(h.e.AutoRefresh("services"))
+	h.doSettle()
+	if len(h.cancel) != 0 {
+		t.Errorf("a quiet refresh must not stop what depends on it: cancelled %v", h.cancel)
+	}
+	h.finish("services", "api\nweb\nnew\n")
+	h.doSettle()
+	if r, ok := h.inflight["logs"]; !ok || r.ID != stream {
+		t.Errorf("the log stream restarted (it would re-read its history): %+v", r)
+	}
+	if _, ok := h.inflight["tasks"]; ok {
+		t.Error("tasks re-ran although its command is unchanged")
+	}
+	if v := h.e.ContentView("logs"); v.Stale {
+		t.Errorf("logs = %+v", v)
+	}
+	if v := h.e.View("tasks"); v.Stale || v.Loading {
+		t.Errorf("tasks must not flicker during a parent's refresh: %+v", v)
+	}
+}
