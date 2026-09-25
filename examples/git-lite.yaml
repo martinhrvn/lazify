@@ -23,20 +23,25 @@ panels:
     title: Tags
     source: git tag --sort=-creatordate
     side: right                                        # right of the main view
-
-detail:
-  branches:
-    tabs:
-      - name: Log
-        cmd: git log --oneline --graph --color=always {{.line}}
-  commits:
-    tabs:
-      - name: Diff
-        cmd: git show --color=always {{.fields.0}}
-  files:
-    tabs:
-      - name: Diff
-        cmd: git show --color=always {{commits.fields.0}} -- {{.line}}
+  - id: main                                         # a content panel: shows content for the
+    title: Main                                      # last focused list panel (center by default)
+    content:
+      branches:
+        tabs:
+          - name: Log
+            cmd: git log --oneline --graph --color=always {{.line}}
+      commits:
+        tabs:
+          - name: Diff
+            cmd: git show --color=always {{.fields.0}}
+      files:
+        tabs:
+          - name: Diff
+            cmd: git show --color=always {{commits.fields.0}} -- {{.line}}
+      default:                                       # any other panel (status, tags)
+        tabs:
+          - name: Status
+            cmd: git -c color.status=always status --short --branch
 
 actions:
   branches:

@@ -6,11 +6,12 @@ package ui
 type viewport struct {
 	offset int
 	follow bool
+	height int // lines shown at the last render, for paging
 }
 
 // reset starts a new piece of content: at the bottom and following for a
 // stream, at the top otherwise.
-func (v *viewport) reset(follow bool) { *v = viewport{follow: follow} }
+func (v *viewport) reset(follow bool) { *v = viewport{follow: follow, height: v.height} }
 
 // scroll moves by delta lines within content of n lines shown h at a time.
 func (v *viewport) scroll(delta, n, h int) {
@@ -29,6 +30,7 @@ func (v *viewport) scroll(delta, n, h int) {
 
 // window returns the lines visible at height h.
 func (v *viewport) window(lines []string, h int) []string {
+	v.height = h
 	bottom := max(0, len(lines)-h)
 	if v.follow || v.offset > bottom {
 		v.offset = bottom

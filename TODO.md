@@ -28,6 +28,15 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `stream` tabs (live tail): incremental output, 10k-line buffer, killed on change, `r` restarts
 - [x] scrolling (`J`/`K`, `ctrl+d`/`ctrl+u`), follow mode for streams; reusable `ui/viewport.go`
 - [ ] later: search in the main view, `g`/`G` top/bottom, wrap long lines toggle
+## Content panels ✅ (replaces `detail:`)
+- [x] any panel can be a content panel: `content: {<list panel>|default: {tabs: [...]}}`
+- [x] shows content for the **active** (last focused list) panel; several content panels run independently
+- [x] `side: center`; three columns `[left][center][right]`, no implicit main area
+- [x] content panels are focusable (`j/k` scroll); `[`/`]`, `J/K`, `ctrl+d/u` act on the focused or first one
+- [x] `detail:` gives a migration error
+- [ ] later: shorthand for single-tab entries (`commits: {cmd: ...}`)
+- [ ] later: tab names optional when there is one tab (title from the panel)
+
 ## M4 — actions
 ## Enter on a row — popup or drill-down
 Each panel can bind Enter to one of two behaviours. Esc always goes back one level.

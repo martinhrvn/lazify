@@ -2,6 +2,7 @@ package def
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Name != "git-lite" {
 		t.Errorf("Name = %q", d.Name)
 	}
-	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "tags"}) {
+	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "tags", "main"}) {
 		t.Errorf("panels = %v", got)
 	}
 	commits, files := d.Panel("commits"), d.Panel("files")
@@ -28,10 +29,10 @@ func TestLoadGitExample(t *testing.T) {
 	if !reflect.DeepEqual(files.Deps, []string{"commits"}) {
 		t.Errorf("files deps = %v", files.Deps)
 	}
-	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "tags"}) {
+	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "tags", "main"}) {
 		t.Errorf("order = %v", d.Order)
 	}
-	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "tags"}) {
+	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "tags", "main"}) {
 		t.Errorf("top level = %v", topLevel(d))
 	}
 	if !reflect.DeepEqual(commits.Key, []string{"fields", "0"}) {
@@ -50,7 +51,7 @@ func TestLoadGitExample(t *testing.T) {
 	if len(acts) != 1 || acts[0].Key != "space" || acts[0].Mode != "background" {
 		t.Errorf("actions = %+v", acts)
 	}
-	if tabs := d.Detail["commits"].Tabs; len(tabs) != 1 || tabs[0].Mode != "once" || tabs[0].Format != "text" {
+	if tabs := d.Panel("main").Content["commits"].Tabs; len(tabs) != 1 || tabs[0].Mode != "once" || tabs[0].Format != "text" {
 		t.Errorf("tabs = %+v", tabs)
 	}
 }
@@ -78,7 +79,7 @@ func TestLoadECSExample(t *testing.T) {
 	if n := len(d.Panel("services").Columns); n != 3 {
 		t.Errorf("columns = %d", n)
 	}
-	if d.Detail["tasks"].Tabs[0].Mode != "stream" {
+	if d.Panel("main").Content["tasks"].Tabs[0].Mode != "stream" {
 		t.Error("stream mode not parsed")
 	}
 	if d.Actions["tasks"][0].Mode != "interactive" || !d.Actions["services"][0].Confirm {
@@ -156,12 +157,21 @@ func TestValidationErrors(t *testing.T) {
 		{"unknown child", "panels:\n  - {id: a, source: x, children: b}", "children: unknown panel \"b\""},
 		{"self child", "panels:\n  - {id: a, source: x, children: a}", "children"},
 		{"two parents", "panels:\n  - {id: a, source: x, children: c}\n  - {id: b, source: x, children: c}\n  - {id: c, source: x}", "already a child of a"},
-		{"detail unknown panel", "panels: [{id: a, source: x}]\ndetail:\n  b: {tabs: [{name: n, cmd: c}]}", "t.yaml:3: detail: unknown panel \"b\""},
-		{"tab without cmd", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n}]}", "cmd is required"},
-		{"tab bad mode", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, mode: loop}]}", "mode"},
-		{"tab bad format", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, format: xml}]}", "format"},
-		{"json stream", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c, mode: stream, format: json}]}", "format json is only supported with mode once"},
-		{"tab unknown ref", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: 'c {{z.q}}'}]}", "unknown panel \"z\""},
+		{"content unknown panel", "panels:\n  - {id: a, source: x}\n  - id: m\n    content:\n      b: {tabs: [{name: n, cmd: c}]}", "t.yaml:5: panel m: content: unknown panel \"b\""},
+		{"content key is content panel", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {n: {tabs: [{name: t, cmd: c}]}}}\n  - {id: n, content: {a: {tabs: [{name: t, cmd: c}]}}}", "panel m: content: n is a content panel"},
+		{"tab without cmd", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n}]}}}", "cmd is required"},
+		{"tab bad mode", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: c, mode: loop}]}}}", "mode"},
+		{"tab bad format", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: c, format: xml}]}}}", "format"},
+		{"json stream", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: c, mode: stream, format: json}]}}}", "format json is only supported with mode once"},
+		{"tab unknown ref", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: 'c {{z.q}}'}]}}}", "unknown panel \"z\""},
+		{"source and content", "panels:\n  - {id: a, source: x, content: {default: {tabs: [{name: n, cmd: c}]}}}", "panel a: use either source or content, not both"},
+		{"list field on content", "panels:\n  - {id: a, source: x}\n  - {id: m, rows: '.', content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: rows only applies to list panels"},
+		{"children on content", "panels:\n  - {id: a, source: x}\n  - {id: m, children: a, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: children only applies to list panels"},
+		{"content panel as child", "panels:\n  - {id: a, source: x, children: m}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: c}]}}}", "children: m is a content panel"},
+		{"ref to content panel", "panels:\n  - {id: m, content: {default: {tabs: [{name: n, cmd: c}]}}}\n  - {id: a, source: 'x {{m.y}}'}", "m is a content panel and has no rows"},
+		{"default id reserved", "panels:\n  - {id: default, source: x}", "panel default: id is reserved"},
+		{"old detail key", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c}]}", "t.yaml:2: detail: was replaced by content panels"},
+		{"bad side", "panels:\n  - {id: a, source: x, side: middle}", "side must be left, center or right"},
 		{"action unknown panel", "panels: [{id: a, source: x}]\nactions:\n  b: [{key: x, cmd: c}]", "actions: unknown panel \"b\""},
 		{"action no key", "panels: [{id: a, source: x}]\nactions:\n  a: [{cmd: c}]", "key is required"},
 		{"action reserved key", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: q, cmd: c}]", "key \"q\" is reserved"},
@@ -197,7 +207,7 @@ func TestReportsAllErrors(t *testing.T) {
 	}
 }
 
-func TestValidDetailAndActionRefs(t *testing.T) {
+func TestValidContentAndActionRefs(t *testing.T) {
 	src := `
 context:
   region: {values: [a, b], default: a}
@@ -206,9 +216,12 @@ env:
 panels:
   - {id: a, source: "x {{ctx.region}}", children: b}
   - {id: b, source: "x {{a.y}}"}
-detail:
-  b:
-    tabs: [{name: n, cmd: "c {{.q}} {{a.y}} {{ctx.region}}"}]
+  - id: main
+    content:
+      b:
+        tabs: [{name: n, cmd: "c {{.q}} {{a.y}} {{ctx.region}}"}]
+      default:
+        tabs: [{name: row, cmd: "echo {{.}}", format: json}]
 actions:
   b:
     - {key: s, cmd: "c {{.q}} {{input}}", prompt: Count, refresh: [a, b]}
@@ -304,7 +317,7 @@ panels:
 
 func TestLayoutValidation(t *testing.T) {
 	tests := []struct{ name, src, want string }{
-		{"bad side", "panels:\n  - id: a\n    source: x\n    side: top", "t.yaml:4: panel a: side must be left or right"},
+		{"bad side", "panels:\n  - id: a\n    source: x\n    side: top", "t.yaml:4: panel a: side must be left, center or right"},
 		{"bad size", "panels:\n  - id: a\n    source: x\n    size: big", "t.yaml:4: panel a: size"},
 		{"zero size", "panels: [{id: a, source: x, size: 0}]", "size"},
 		{"zero fr", "panels: [{id: a, source: x, size: 0fr}]", "size"},
@@ -330,10 +343,66 @@ func TestTabDeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := d.Detail["files"].Tabs[0].Deps; !reflect.DeepEqual(got, []string{"commits"}) {
+	if got := d.Panel("main").Content["files"].Tabs[0].Deps; !reflect.DeepEqual(got, []string{"commits"}) {
 		t.Errorf("files tab deps = %v", got)
 	}
-	if got := d.Detail["commits"].Tabs[0].Deps; got != nil {
+	if got := d.Panel("main").Content["commits"].Tabs[0].Deps; got != nil {
 		t.Errorf("commits tab deps = %v, want none (only row refs)", got)
+	}
+}
+
+func TestContentPanels(t *testing.T) {
+	src := `
+panels:
+  - {id: branches, source: git branch}
+  - id: main
+    title: Main
+    content:
+      branches:
+        tabs: [{name: Log, cmd: "git log {{.line}}"}]
+      default:
+        tabs: [{name: Status, cmd: git status}]
+  - id: log
+    side: right
+    size: fit
+    content:
+      default:
+        tabs: [{name: Tail, cmd: tail -F x.log, mode: stream}]
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, log, branches := d.Panel("main"), d.Panel("log"), d.Panel("branches")
+	if !main.IsContent() || !log.IsContent() || branches.IsContent() {
+		t.Fatalf("kinds: main %v log %v branches %v", main.IsContent(), log.IsContent(), branches.IsContent())
+	}
+	if main.Side != "center" || log.Side != "right" || branches.Side != "left" {
+		t.Errorf("sides = %q %q %q", main.Side, log.Side, branches.Side)
+	}
+	if log.Size.Kind != Fit {
+		t.Errorf("log size = %+v", log.Size)
+	}
+	if got := main.Content["branches"].Tabs[0].Cmd.Source(); got != "git log {{.line}}" {
+		t.Errorf("branches entry = %q", got)
+	}
+	if main.Content["default"] == nil || log.Content["default"].Tabs[0].Mode != "stream" {
+		t.Error("default entries not parsed")
+	}
+	if main.Source != nil || main.Parser != nil || main.Label != nil {
+		t.Error("content panel should have no list fields")
+	}
+	if slices.Contains(d.Order, "main") && len(main.Deps) != 0 {
+		t.Errorf("content panel deps = %v", main.Deps)
+	}
+}
+
+func TestListPanelCanBeCentered(t *testing.T) {
+	d, err := Parse([]byte("panels: [{id: a, source: x, side: center}]"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Panel("a").Side != "center" {
+		t.Errorf("side = %q", d.Panel("a").Side)
 	}
 }

@@ -4,7 +4,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -38,8 +37,8 @@ type Model struct {
 	runner   runner.Runner
 	cancels  map[uint64]context.CancelFunc
 	streams  map[uint64]<-chan streamEvent
-	vp       *viewport // main view scroll; pointer so View can apply follow
-	vpID     string    // DetailView.ID the viewport belongs to
+	vps      map[string]*viewport // per content panel; pointers so View can apply follow
+	vpIDs    map[string]string    // ContentView.ID each viewport belongs to
 	debounce time.Duration
 	width    int
 	height   int
@@ -61,7 +60,8 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		runner:   r,
 		cancels:  map[uint64]context.CancelFunc{},
 		streams:  map[uint64]<-chan streamEvent{},
-		vp:       &viewport{},
+		vps:      map[string]*viewport{},
+		vpIDs:    map[string]string{},
 		debounce: engine.Debounce,
 	}
 }
@@ -99,7 +99,7 @@ func (m Model) apply(fx engine.Effects) tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	next.syncViewport()
+	next.syncViewports()
 	return next, cmd
 }
 
@@ -143,8 +143,16 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "j", "down":
+		if f := m.eng.Focused(); m.eng.IsContent(f) {
+			m.scrollContent(f, 1, false)
+			return m, nil
+		}
 		return m, m.apply(m.eng.Move(1))
 	case "k", "up":
+		if f := m.eng.Focused(); m.eng.IsContent(f) {
+			m.scrollContent(f, -1, false)
+			return m, nil
+		}
 		return m, m.apply(m.eng.Move(-1))
 	case "tab":
 		return m, m.apply(m.eng.FocusNext())
@@ -155,13 +163,13 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "[":
 		return m, m.apply(m.eng.PrevTab())
 	case "J":
-		m.scrollMain(1)
+		m.scrollContent(m.eng.Target(), 1, false)
 	case "K":
-		m.scrollMain(-1)
+		m.scrollContent(m.eng.Target(), -1, false)
 	case "ctrl+d":
-		m.scrollMain(m.mainHeight() / 2)
+		m.scrollContent(m.eng.Target(), 1, true)
 	case "ctrl+u":
-		m.scrollMain(-m.mainHeight() / 2)
+		m.scrollContent(m.eng.Target(), -1, true)
 	case "r":
 		return m, m.apply(m.eng.Refresh())
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -177,32 +185,44 @@ func (m Model) View() string {
 		return ""
 	}
 	bodyH := m.height - 1
-	var left, right []string
+	var left, center, right []string
 	for _, id := range m.eng.TopLevel() {
-		if m.def.Panel(id).Side == "right" {
+		switch m.def.Panel(id).Side {
+		case "right":
 			right = append(right, id)
-		} else {
+		case "center":
+			center = append(center, id)
+		default:
 			left = append(left, id)
 		}
 	}
 
 	lay := m.def.Layout
-	leftW := m.width * lay.LeftWidth / 100
-	rightW := 0
+	leftW, rightW := 0, 0
+	if len(left) > 0 {
+		leftW = m.width * lay.LeftWidth / 100
+	}
 	if len(right) > 0 {
 		rightW = m.width * lay.RightWidth / 100
 	}
-	mainW := m.width - leftW - rightW
-	if mainW < 10 { // too narrow for main: give its space to the left column
-		leftW, mainW = leftW+mainW, 0
+	centerW := m.width - leftW - rightW
+	switch {
+	case len(center) == 0 && len(left) > 0: // no center: the left column takes its space
+		leftW, centerW = leftW+centerW, 0
+	case len(center) == 0:
+		rightW, centerW = rightW+centerW, 0
+	case centerW < 10 && len(left) > 0: // keep the center readable
+		leftW, centerW = max(0, leftW-(10-centerW)), 10
 	}
 
-	cols := []string{m.column(left, leftW, bodyH)}
-	if mainW > 0 {
-		cols = append(cols, m.mainView(mainW, bodyH))
-	}
-	if rightW > 0 {
-		cols = append(cols, m.column(right, rightW, bodyH))
+	var cols []string
+	for _, c := range []struct {
+		ids []string
+		w   int
+	}{{left, leftW}, {center, centerW}, {right, rightW}} {
+		if len(c.ids) > 0 && c.w > 0 {
+			cols = append(cols, m.column(c.ids, c.w, bodyH))
+		}
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
 }
@@ -210,14 +230,11 @@ func (m Model) View() string {
 // column stacks panels in a box each, sized by the definition's layout rules,
 // clipped or padded to exactly h lines.
 func (m Model) column(ids []string, w, h int) string {
-	if len(ids) == 0 {
-		return clip("", w, h)
-	}
 	slots := make([]slot, len(ids))
 	for i, id := range ids {
 		slots[i] = slot{
 			size:    m.def.Panel(id).Size,
-			content: m.contentLines(id),
+			content: m.wantLines(id),
 			focused: id == m.eng.Focused(),
 		}
 	}
@@ -225,8 +242,14 @@ func (m Model) column(ids []string, w, h int) string {
 	all := m.eng.TopLevel()
 	boxes := make([]string, len(ids))
 	for i, id := range ids {
-		title := fmt.Sprintf("[%d] %s", slices.Index(all, id)+1, m.eng.View(id).Title)
-		boxes[i] = box(title, m.panelLines(id, w-2, hs[i]), w, hs[i], id == m.eng.Focused())
+		num := fmt.Sprintf("[%d] ", slices.Index(all, id)+1)
+		focused := id == m.eng.Focused()
+		if m.eng.IsContent(id) {
+			title, lines := m.contentBox(id, hs[i])
+			boxes[i] = box(num+title, lines, w, hs[i], focused)
+		} else {
+			boxes[i] = box(num+m.eng.View(id).Title, m.panelLines(id, w-2, hs[i]), w, hs[i], focused)
+		}
 	}
 	return clip(lipgloss.JoinVertical(lipgloss.Left, boxes...), w, h)
 }
@@ -243,7 +266,12 @@ func clip(s string, w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) contentLines(id string) int {
+// wantLines is how many lines panel id would like to show (for `size: fit`).
+func (m Model) wantLines(id string) int {
+	if m.eng.IsContent(id) {
+		_, head, body, _ := m.contentParts(id)
+		return len(head) + len(body)
+	}
 	v := m.eng.View(id)
 	n := max(len(v.Lines), len(v.Columns))
 	if len(v.Headers) > 0 {
@@ -300,43 +328,36 @@ func (m Model) panelLines(id string, w, h int) []string {
 	return out
 }
 
-// mainView draws the focused panel's detail: a tab bar in the title and the
-// active tab's output, scrolled by the viewport.
-func (m Model) mainView(w, h int) string {
-	inner := max(0, h-2)
-	title, head, body, stale := m.mainContent()
-	shown := m.vp.window(body, max(0, inner-len(head)))
+// contentBox renders content panel id at inner height h: its title (the tab
+// bar) and the visible lines of its output, scrolled by its viewport.
+func (m Model) contentBox(id string, h int) (string, []string) {
+	title, head, body, stale := m.contentParts(id)
 	lines := slices.Clone(head)
-	for _, l := range shown {
+	for _, l := range m.viewport(id).window(body, max(0, h-len(head))) {
 		if stale {
 			l = styleDim.Render(ansi.Strip(l))
 		}
 		lines = append(lines, l)
 	}
-	return clip(box(title, lines, w, inner, false), w, h)
+	return title, lines
 }
 
-// mainContent splits the main view into its title, fixed head lines (errors,
-// placeholders) and the scrollable body.
-func (m Model) mainContent() (title string, head, body []string, stale bool) {
-	v := m.eng.DetailView()
-	if len(v.Tabs) == 0 {
-		if !v.HasRow {
-			return "Main", []string{styleDim.Render(v.Empty)}, nil, false
+// contentParts splits a content panel into its title, fixed head lines
+// (errors, placeholders) and the scrollable body.
+func (m Model) contentParts(id string) (title string, head, body []string, stale bool) {
+	v := m.eng.ContentView(id)
+	title = v.Title
+	if len(v.Tabs) > 0 {
+		tabs := make([]string, len(v.Tabs))
+		for i, t := range v.Tabs {
+			if i == v.Active {
+				tabs[i] = styleTabActive.Render(t)
+			} else {
+				tabs[i] = t
+			}
 		}
-		b, _ := json.MarshalIndent(v.Row, "", "  ")
-		return "Main", nil, strings.Split(string(b), "\n"), false
+		title = strings.Join(tabs, " │ ")
 	}
-
-	tabs := make([]string, len(v.Tabs))
-	for i, t := range v.Tabs {
-		if i == v.Active {
-			tabs[i] = styleTabActive.Render(t)
-		} else {
-			tabs[i] = t
-		}
-	}
-	title = strings.Join(tabs, " │ ")
 	switch {
 	case v.Live:
 		title += styleLive.Render(" ● live")
@@ -363,25 +384,49 @@ func (m Model) mainContent() (title string, head, body []string, stale bool) {
 	return title, head, v.Lines, v.Stale
 }
 
-// mainHeight is the number of content lines inside the main box.
-func (m Model) mainHeight() int { return max(1, m.height-1-2) }
-
-func (m Model) scrollMain(delta int) {
-	_, head, body, _ := m.mainContent()
-	m.vp.scroll(delta, len(body), max(1, m.mainHeight()-len(head)))
+func (m Model) viewport(id string) *viewport {
+	vp, ok := m.vps[id]
+	if !ok {
+		vp = &viewport{}
+		m.vps[id] = vp
+	}
+	return vp
 }
 
-// syncViewport resets scrolling when the main view shows different content:
-// streams start following the tail, everything else starts at the top.
-func (m *Model) syncViewport() {
-	if v := m.eng.DetailView(); v.ID != m.vpID {
-		m.vpID = v.ID
-		m.vp.reset(v.Live)
+// scrollContent scrolls content panel id; delta is in lines, or in half pages
+// when halfPages is set.
+func (m Model) scrollContent(id string, delta int, halfPages bool) {
+	if id == "" {
+		return
+	}
+	_, _, body, _ := m.contentParts(id)
+	vp := m.viewport(id)
+	h := max(1, vp.height) // body lines shown at the last render
+	if halfPages {
+		delta *= max(1, vp.height/2)
+	}
+	vp.scroll(delta, len(body), h)
+}
+
+// syncViewports resets a content panel's scrolling when it shows different
+// content: streams start following the tail, everything else starts at the top.
+func (m *Model) syncViewports() {
+	for _, id := range m.eng.TopLevel() {
+		if !m.eng.IsContent(id) {
+			continue
+		}
+		if v := m.eng.ContentView(id); v.ID != m.vpIDs[id] {
+			m.vpIDs[id] = v.ID
+			m.viewport(id).reset(v.Live)
+		}
 	}
 }
 
 func (m Model) statusLine() string {
-	hints := []string{"j/k move", "tab focus", "[/] detail tab", "J/K ctrl+d/u scroll", "r refresh", "q quit"}
+	hints := []string{"j/k move", "tab focus", "[/] tab", "J/K ctrl+d/u scroll", "r refresh", "q quit"}
+	if m.eng.IsContent(m.eng.Focused()) {
+		hints[0] = "j/k scroll"
+	}
 	return ansi.Truncate(styleHint.Render(strings.Join(hints, " · ")), m.width, "…")
 }
 

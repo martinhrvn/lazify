@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,11 +24,25 @@ type fakeRunner struct {
 	errs    map[string]error
 	streams map[string][]string
 	gap     time.Duration // pause between stream chunks
+	mu      sync.Mutex
 	ran     []string
 }
 
+func (f *fakeRunner) record(cmd string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ran = append(f.ran, cmd)
+}
+
+// commands returns what has run so far; streams run on their own goroutine.
+func (f *fakeRunner) commands() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.ran)
+}
+
 func (f *fakeRunner) Stream(_ context.Context, req runner.Request, onData func([]byte)) error {
-	f.ran = append(f.ran, req.Cmd)
+	f.record(req.Cmd)
 	for _, c := range f.streams[req.Cmd] {
 		time.Sleep(f.gap)
 		onData([]byte(c))
@@ -35,7 +51,7 @@ func (f *fakeRunner) Stream(_ context.Context, req runner.Request, onData func([
 }
 
 func (f *fakeRunner) Run(_ context.Context, req runner.Request) (runner.Result, error) {
-	f.ran = append(f.ran, req.Cmd)
+	f.record(req.Cmd)
 	return runner.Result{Stdout: []byte(f.out[req.Cmd])}, f.errs[req.Cmd]
 }
 
@@ -179,12 +195,12 @@ func TestTabFocusesNextPanel(t *testing.T) {
 	m := start(t, twoPanels, r)
 	m = key(t, m, "tab")
 	m = key(t, m, "r")
-	if got := r.ran[len(r.ran)-1]; got != "git tag" {
+	if got := last(r); got != "git tag" {
 		t.Errorf("refresh ran %q, want git tag (focused)", got)
 	}
 	m = key(t, m, "1")
 	m = key(t, m, "r")
-	if got := r.ran[len(r.ran)-1]; got != "git branch" {
+	if got := last(r); got != "git branch" {
 		t.Errorf("refresh ran %q, want git branch", got)
 	}
 }
@@ -258,6 +274,7 @@ panels:
   - {id: commits, title: Commits, source: c}
   - {id: stash, title: Stash, source: st}
   - {id: tags, title: Tags, source: t, side: right}
+  - {id: main, title: Main, content: {default: {tabs: [{name: Status, cmd: "git status"}]}}}
 `
 
 func TestLazygitLayout(t *testing.T) {
@@ -279,24 +296,24 @@ func TestLazygitLayout(t *testing.T) {
 	}
 }
 
-func TestRightColumn(t *testing.T) {
+func TestThreeColumns(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{"t": "v1\n"}}
 	m := start(t, lazygitLayout, r)
 	first := strings.Split(screen(m), "\n")[0]
-	status, main, tags := strings.Index(first, "Status"), strings.Index(first, "Main"), strings.Index(first, "Tags")
-	if !(status < main && main < tags) {
-		t.Errorf("want Status | Main | Tags, got %q", first)
-	}
-	if !strings.Contains(first, "[5] Tags") {
-		t.Errorf("right panel should be numbered after left ones: %q", first)
+	status, main, tags := strings.Index(first, "[1] Status"), strings.Index(first, "[5] Status"), strings.Index(first, "[6] Tags")
+	if status < 0 || main < 0 || tags < 0 || !(status < main && main < tags) {
+		t.Errorf("want [1] Status | [5] main | [6] Tags (left, center, right), got %q", first)
 	}
 	// Tags spans the full height on its own.
 	if h := boxHeight(t, screen(m), "Tags"); h != 29 {
 		t.Errorf("tags height %d, want 29", h)
 	}
-	// Width: 30% left, 25% right of 100 columns.
+	// Width: 30% left, 25% right of 100 columns; the center takes the rest.
 	if col := ansi.StringWidth(first[:main]) - 3; col != 30 { // "╭─ " precedes the title
-		t.Errorf("main box starts at column %d, want 30", col)
+		t.Errorf("center column starts at %d, want 30", col)
+	}
+	if col := ansi.StringWidth(first[:tags]) - 3; col != 75 {
+		t.Errorf("right column starts at %d, want 75", col)
 	}
 }
 
@@ -343,10 +360,10 @@ func TestDependentPanelFollowsSelection(t *testing.T) {
 		t.Errorf("commits did not follow branch selection:\n%s", s)
 	}
 	// Going back is served from the cache.
-	n := len(r.ran)
+	n := len(r.commands())
 	m = key(t, m, "k")
-	if !strings.Contains(screen(m), "a1 main work") || len(r.ran) != n {
-		t.Errorf("revisit should come from cache; ran %v", r.ran[n:])
+	if !strings.Contains(screen(m), "a1 main work") || len(r.commands()) != n {
+		t.Errorf("revisit should come from cache; ran %v", r.commands()[n:])
 	}
 }
 
@@ -367,15 +384,16 @@ func TestCancelledRunsAreKilled(t *testing.T) {
 	}
 }
 
-const detailUIDef = `
+const contentUIDef = `
 panels:
   - {id: commits, title: Commits, source: git log}
-detail:
-  commits:
-    tabs:
-      - {name: Diff, cmd: "git show {{.line}}"}
-      - {name: Stat, cmd: "git stat {{.line}}"}
-      - {name: Tail, cmd: "tail {{.line}}", mode: stream}
+  - id: main
+    content:
+      commits:
+        tabs:
+          - {name: Diff, cmd: "git show {{.line}}"}
+          - {name: Stat, cmd: "git stat {{.line}}"}
+          - {name: Tail, cmd: "tail {{.line}}", mode: stream}
 `
 
 func numbered(prefix string, n int) string {
@@ -399,13 +417,13 @@ func mainLines(t *testing.T, m tea.Model) []string {
 	return out
 }
 
-func TestDetailTabs(t *testing.T) {
+func TestContentTabs(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{
 		"git log":     "a1\n",
 		"git show a1": "diff for a1\n",
 		"git stat a1": "stat for a1\n",
 	}}
-	m := start(t, detailUIDef, r)
+	m := start(t, contentUIDef, r)
 	s := screen(m)
 	for _, want := range []string{"Diff", "Stat", "Tail", "diff for a1"} {
 		if !strings.Contains(s, want) {
@@ -422,9 +440,9 @@ func TestDetailTabs(t *testing.T) {
 	}
 }
 
-func TestDetailScrolls(t *testing.T) {
+func TestContentScrolls(t *testing.T) {
 	r := &fakeRunner{out: map[string]string{"git log": "a1\n", "git show a1": numbered("line", 100)}}
-	m := start(t, detailUIDef, r)
+	m := start(t, contentUIDef, r)
 	if got := mainLines(t, m)[0]; got != "line 0" {
 		t.Fatalf("first line = %q", got)
 	}
@@ -448,7 +466,7 @@ func TestStreamTabFollowsTail(t *testing.T) {
 		out:     map[string]string{"git log": "a1\n"},
 		streams: map[string][]string{"tail a1": {numbered("log", 30), numbered("more", 20)}},
 	}
-	m := start(t, detailUIDef, r)
+	m := start(t, contentUIDef, r)
 	m = key(t, m, "[") // Diff → Tail
 	ls := mainLines(t, m)
 	if last := ls[len(ls)-1]; last != "more 19" {
@@ -464,12 +482,12 @@ func TestStreamTabFollowsTail(t *testing.T) {
 	}
 }
 
-func TestDetailShowsErrors(t *testing.T) {
+func TestContentShowsErrors(t *testing.T) {
 	r := &fakeRunner{
 		out:  map[string]string{"git log": "a1\n"},
 		errs: map[string]error{"git show a1": errors.New("exit status 128: bad revision")},
 	}
-	if s := screen(start(t, detailUIDef, r)); !strings.Contains(s, "bad revision") {
+	if s := screen(start(t, contentUIDef, r)); !strings.Contains(s, "bad revision") {
 		t.Errorf("detail error not shown:\n%s", s)
 	}
 }
@@ -480,7 +498,7 @@ func TestStreamKeepsDeliveringAfterFirstChunk(t *testing.T) {
 		streams: map[string][]string{"tail a1": {"first\n", "second\n", "third\n"}},
 		gap:     20 * time.Millisecond, // separate batches, like a real tail
 	}
-	m := start(t, detailUIDef, r)
+	m := start(t, contentUIDef, r)
 	m = key(t, m, "[")
 	s := screen(m)
 	for _, want := range []string{"first", "second", "third"} {
@@ -488,4 +506,64 @@ func TestStreamKeepsDeliveringAfterFirstChunk(t *testing.T) {
 			t.Errorf("missing streamed line %q:\n%s", want, s)
 		}
 	}
+}
+
+func TestNoContentPanelListsSpanFullWidth(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"git branch": "main\n"}}
+	first := strings.Split(screen(start(t, twoPanels, r)), "\n")[0]
+	if strings.Count(first, "╭") != 1 || ansi.StringWidth(first) != 100 {
+		t.Errorf("want one full-width column, got %q", first)
+	}
+}
+
+func TestFocusedContentPanelScrollsWithJ(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{"git log": "a1\nb2\n", "git show a1": numbered("line", 100)}}
+	m := start(t, contentUIDef, r)
+	m = key(t, m, "tab") // focus main
+	m = key(t, m, "j")
+	m = key(t, m, "j")
+	if got := mainLines(t, m)[0]; got != "line 2" {
+		t.Errorf("j on focused content should scroll it, first line %q", got)
+	}
+	if s := screen(m); !strings.Contains(s, "j/k scroll") {
+		t.Errorf("hints should say j/k scroll when content is focused")
+	}
+	m = key(t, m, "1") // back to commits: j moves the cursor again
+	m = key(t, m, "j")
+	if last(r) != "git show b2" {
+		t.Errorf("j on commits should move the cursor, last ran %q", last(r))
+	}
+}
+
+func TestTwoContentPanelsStackInCenter(t *testing.T) {
+	src := `
+panels:
+  - {id: commits, title: Commits, source: git log}
+  - id: main
+    content: {commits: {tabs: [{name: Diff, cmd: "git show {{.line}}"}]}}
+  - id: log
+    size: 5
+    content: {default: {tabs: [{name: Log, cmd: tail app.log, mode: stream}]}}
+`
+	r := &fakeRunner{
+		out:     map[string]string{"git log": "a1\n", "git show a1": "diff a1\n"},
+		streams: map[string][]string{"tail app.log": {"booted\n"}},
+	}
+	s := screen(start(t, src, r))
+	if h := boxHeight(t, s, "Log"); h != 7 {
+		t.Errorf("log panel height %d, want 7 (size 5 + borders)", h)
+	}
+	if h := boxHeight(t, s, "Diff"); h != 29-7 {
+		t.Errorf("main panel height %d, want %d", h, 29-7)
+	}
+	for _, want := range []string{"diff a1", "booted"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func last(r *fakeRunner) string {
+	c := r.commands()
+	return c[len(c)-1]
 }

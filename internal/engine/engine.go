@@ -25,8 +25,7 @@ const Debounce = 150 * time.Millisecond
 // Run asks the caller to execute a command and report it via Finished(ID, ...).
 type Run struct {
 	ID     uint64
-	Panel  string // the panel it is for (for a detail run: the focused panel)
-	Detail bool   // a detail tab command rather than a panel source
+	Panel  string // the panel it is for (list or content panel)
 	Stream bool   // long-running: use Runner.Stream and report chunks via StreamData
 	Req    runner.Request
 }
@@ -74,10 +73,11 @@ type Engine struct {
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
 	cache    map[string][]rows.Row
-	detail   detailState
-	tabIdx   map[string]int      // active detail tab per panel
-	dcache   map[string][]string // once-tab output by rendered command
-	focus    int                 // index into TopLevel()
+	views    map[string]*viewState // per content panel
+	tabIdx   map[string]int        // active tab per (content panel, entry)
+	active   string                // last focused list panel: what content panels show
+	dcache   map[string][]string   // once-tab output by rendered command
+	focus    int                   // index into TopLevel()
 	nextID   uint64
 	settleID uint64
 	fx       Effects // accumulated by the current call
@@ -92,6 +92,7 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 		cache:  map[string][]rows.Row{},
 		tabIdx: map[string]int{},
 		dcache: map[string][]string{},
+		views:  map[string]*viewState{},
 	}
 	for name, cv := range d.Context {
 		e.ctx[name] = cv.Default
@@ -103,6 +104,15 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 	}
 	for _, p := range d.Panels {
 		e.panels[p.ID] = &panelState{def: p}
+		if p.IsContent() {
+			e.views[p.ID] = &viewState{}
+		}
+	}
+	for _, id := range e.TopLevel() {
+		if !e.IsContent(id) {
+			e.active = id
+			break
+		}
 	}
 	return e
 }
@@ -119,15 +129,17 @@ func (e *Engine) Start() Effects {
 	for _, id := range e.def.Order {
 		e.evaluate(e.panels[id], true)
 	}
-	e.evaluateDetail(true)
+	e.evaluateContent(true)
 	return e.take()
 }
 
 // Finished applies a run's result. Results of superseded runs are ignored.
 func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
-	if id != 0 && id == e.detail.runID {
-		e.detailFinished(stdout, runErr)
-		return e.take()
+	for _, v := range e.views {
+		if id != 0 && id == v.runID {
+			e.contentFinished(v, stdout, runErr)
+			return e.take()
+		}
 	}
 	var ps *panelState
 	for _, p := range e.panels {
@@ -149,7 +161,7 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 		e.setRows(ps, cmd, parsed)
 	}
 	e.propagate(ps.def.ID, true)
-	e.evaluateDetail(true)
+	e.evaluateContent(true)
 	return e.take()
 }
 
@@ -161,7 +173,7 @@ func (e *Engine) Settle(id uint64) Effects {
 	for _, pid := range e.def.Order {
 		e.evaluate(e.panels[pid], true)
 	}
-	e.evaluateDetail(true)
+	e.evaluateContent(true)
 	return e.take()
 }
 
@@ -169,8 +181,8 @@ func (e *Engine) Settle(id uint64) Effects {
 // Dependents are served from the cache at once; misses wait for Settle.
 func (e *Engine) Move(delta int) Effects {
 	ps := e.panels[e.Focused()]
-	if len(ps.rows) == 0 {
-		return e.take()
+	if ps.def.IsContent() || len(ps.rows) == 0 {
+		return e.take() // content panels scroll in the UI
 	}
 	cursor := max(0, min(len(ps.rows)-1, ps.cursor+delta))
 	if cursor == ps.cursor {
@@ -181,24 +193,31 @@ func (e *Engine) Move(delta int) Effects {
 	if hasDeps {
 		e.propagate(ps.def.ID, false)
 	}
-	e.evaluateDetail(false)
-	if hasDeps || len(e.tabs(ps.def.ID)) > 0 {
+	e.evaluateContent(false)
+	if hasDeps || e.anyContent() {
 		e.settleID++
 		e.fx.Settle = e.settleID
 	}
 	return e.take()
 }
 
-// Refresh re-runs the focused panel, bypassing the cache.
+// Refresh re-runs the focused panel, bypassing the cache. A list panel also
+// re-runs what the content panels show for it; a content panel re-runs its tab.
 func (e *Engine) Refresh() Effects {
 	ps := e.panels[e.Focused()]
+	if ps.def.IsContent() {
+		e.refreshContent(ps.def.ID)
+		return e.take()
+	}
 	if ps.blocked != "" || ps.pending {
 		return e.take()
 	}
 	if cmd, ok := e.render(ps); ok {
 		e.start(ps, cmd)
 	}
-	e.refreshDetail()
+	for _, id := range e.contentPanels() {
+		e.refreshContent(id)
+	}
 	return e.take()
 }
 
@@ -220,8 +239,8 @@ func (e *Engine) propagate(id string, run bool) {
 // evaluate brings one panel up to date with its inputs' selections. With
 // run=false, cache misses are left pending instead of started.
 func (e *Engine) evaluate(ps *panelState, run bool) {
-	if ps.def.Parent != "" {
-		return // drill-in children run only when opened
+	if ps.def.Parent != "" || ps.def.IsContent() {
+		return // drill-in children run only when opened; content panels have no source
 	}
 	for _, dep := range ps.def.Deps {
 		d := e.panels[dep]
@@ -340,19 +359,21 @@ func (e *Engine) selection(id string) (rows.Row, bool) {
 }
 
 // TopLevel lists the panels that own a slot (not drill-in children) in visual
-// order: the left column top to bottom, then the right column.
+// order: the left column top to bottom, then the center, then the right.
 func (e *Engine) TopLevel() []string {
-	var left, right []string
+	var left, center, right []string
 	for _, p := range e.def.Panels {
 		switch {
 		case p.Parent != "":
 		case p.Side == "right":
 			right = append(right, p.ID)
+		case p.Side == "center":
+			center = append(center, p.ID)
 		default:
 			left = append(left, p.ID)
 		}
 	}
-	return append(left, right...)
+	return slices.Concat(left, center, right)
 }
 
 // Focused returns the id of the focused panel.
@@ -372,11 +393,15 @@ func (e *Engine) FocusPanel(id string) Effects {
 	return e.take()
 }
 
-// setFocus focuses TopLevel()[i] (wrapping) and shows its detail at once.
+// setFocus focuses TopLevel()[i] (wrapping). Focusing a list panel makes it the
+// active one, and content panels switch to it at once.
 func (e *Engine) setFocus(i int) Effects {
 	n := len(e.TopLevel())
 	e.focus = ((i % n) + n) % n
-	e.evaluateDetail(true)
+	if id := e.Focused(); !e.IsContent(id) {
+		e.active = id
+	}
+	e.evaluateContent(true)
 	return e.take()
 }
 

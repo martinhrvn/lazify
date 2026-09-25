@@ -6,7 +6,7 @@
 lazygit-style app for anything you can query from a shell: `lazyecs`,
 `lazycloudwatch`, `lazyk8s-lite`, a git browser, etc.
 
-A definition declares **panels** (lists fed by shell commands), **detail tabs**
+A definition declares **panels**: list panels (fed by shell commands) and content panels (tabs of command output)
 (what to show for the focused row) and **actions** (keys that run commands on the
 focused row). Panels reference each other's *selection* in their commands; the
 engine derives the dependency graph from those references and re-runs downstream
@@ -17,7 +17,7 @@ selected branch.
 
 **Goals**
 - One YAML file = one app. No code required for the common case.
-- lazygit feel: stacked list panels on the left, detail view on the right,
+- lazygit feel: stacked list panels on the left, content (diffs, logs) in the middle,
   everything reacts to the cursor, fast and non-blocking.
 - Any shell command is a data source; JSON (queried with jq syntax) or plain lines.
 - Safe by default: substituted values are shell-quoted.
@@ -40,7 +40,9 @@ selected branch.
 | **Reference** | `{{panel.field}}` in any command — "the value of `field` in `panel`'s current selection". |
 | **Drives** | Panel B references panel A ⇒ B is visible alongside A and re-runs when A's selection changes. |
 | **Drill-in** | Panel B is a `children` of A ⇒ Enter on A replaces A with B in the same slot; Esc returns. |
-| **Detail / main view** | Right-hand area showing the **tabs** for the focused panel's selected row. |
+| **List panel** | A panel with a `source`: rows, a cursor, a selection. |
+| **Content panel** | A panel with `content` instead of `source`: shows **tabs** of command output (diffs, logs, live tails) for the **active** panel. Scrolls instead of selecting. |
+| **Active panel** | The last focused list panel. Content panels show `content[active]`, else `content.default`. Focusing a content panel does not change it. |
 | **Action** | A key bound on a panel that runs a command against the selected row. |
 | **Context** | App-wide switchable values (e.g. AWS profile/region) usable as `{{ctx.name}}`. |
 
@@ -49,8 +51,14 @@ selected branch.
 ### 4.1 Minimal example — git browser (lazygit-lite)
 
 ```yaml
-name: lazygit-lite
+name: git-lite
+layout:
+  focus: equal                                         # like lazygit: panels keep equal heights
 panels:
+  - id: status
+    title: Status
+    source: git status -sb | head -1
+    size: fit                                          # only as tall as its content
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
@@ -64,16 +72,29 @@ panels:
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
-
-detail:
-  commits:
-    tabs:
-      - name: Diff
-        cmd: git show --color=always {{.fields.0}}
-  files:
-    tabs:
-      - name: Diff
-        cmd: git show --color=always {{commits.fields.0}} -- {{.line}}
+  - id: tags
+    title: Tags
+    source: git tag --sort=-creatordate
+    side: right                                        # right of the main view
+  - id: main                                         # a content panel: shows content for the
+    title: Main                                      # last focused list panel (center by default)
+    content:
+      branches:
+        tabs:
+          - name: Log
+            cmd: git log --oneline --graph --color=always {{.line}}
+      commits:
+        tabs:
+          - name: Diff
+            cmd: git show --color=always {{.fields.0}}
+      files:
+        tabs:
+          - name: Diff
+            cmd: git show --color=always {{commits.fields.0}} -- {{.line}}
+      default:                                       # any other panel (status, tags)
+        tabs:
+          - name: Status
+            cmd: git -c color.status=always status --short --branch
 
 actions:
   branches:
@@ -129,16 +150,17 @@ panels:
       - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
       - { title: Status, value: "{{.lastStatus}}" }
 
-detail:
-  services:
-    tabs:
-      - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
-      - { name: JSON,   cmd: "echo {{.}}", format: json }
-  tasks:
-    tabs:
-      - name: Logs
-        mode: stream
-        cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
+  - id: main
+    content:
+      services:
+        tabs:
+          - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
+          - { name: JSON,   cmd: "echo {{.}}", format: json }
+      tasks:
+        tabs:
+          - name: Logs
+            mode: stream
+            cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
 
 actions:
   services:
@@ -175,9 +197,10 @@ actions:
 | `children` | no | Panel id to drill into on Enter. That panel is then not shown at top level. |
 | `refresh` | no | Auto re-run interval (e.g. `10s`). |
 | `size` | no | Height in its column: `fit` (content height, capped at a fair share), `<n>` (fixed lines) or `<n>fr` (flex weight). Default `1fr`. Not allowed on drill-in children. |
-| `side` | no | `left` (default) or `right` of the main view. Not allowed on drill-in children. |
+| `side` | no | `left`, `center` or `right`; list panels default to `left`, content panels to `center`. Not allowed on drill-in children. |
+| `content` | — | Makes this a **content panel** (instead of `source`): map of list-panel id or `default` → `{tabs: [...]}`. List-only fields (`rows`, `split`, `label`, `columns`, `key`, `children`, `refresh`) are not allowed. |
 
-**Detail tab**: `name`, `cmd`, `mode: once|stream` (default `once`), `format: text|json` (json = pretty-print/colourise).
+**Content tab**: `name`, `cmd`, `mode: once|stream` (default `once`), `format: text|json` (json = pretty-print/colourise).
 
 **Action**: `key`, `desc`, `cmd`, `prompt` (text → `{{input}}`), `confirm: bool`,
 `mode: background|interactive` (default background), `refresh: [panel ids]`.
@@ -190,7 +213,7 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 ## 5. Templates (deliberately tiny)
 
 - Syntax: `{{ ref }}` where `ref` is one of
-  - `.path` — field of *this* row (the panel owning the detail tab/action/column);
+  - `.path` — field of *this* row (the active panel for a content tab; the owning panel for an action/column);
     `.` alone = whole row as JSON.
   - `panelId.path` — field of that panel's current selection.
   - `ctx.name` — context value.
@@ -219,26 +242,29 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 4. **Cache** by *rendered command string* (env is fixed per session; context changes clear it). Errors are not cached. Revisiting a selection shows cached rows
    instantly; `r` or the `refresh` interval re-runs. While re-running, old rows are shown
    **dimmed (stale)** rather than blanked.
-5. **Detail tabs** follow the same rules, keyed on the focused panel's selection (plus any
-   panels the tab's `cmd` references); only the visible tab runs. Cursor moves use the cache or
+5. **Content panels** follow the same rules, keyed on the active panel's selection (only when
+   the tab uses `{{.x}}`) plus any panels the tab's `cmd` references; each content panel runs
+   independently and only its visible tab runs. only the visible tab runs. Cursor moves use the cache or
    wait for the debounce; focus and tab changes run at once. `once` output is cached by command
    (`format: json` pretty-prints it). `stream` tabs (live tail) run without a timeout, merge
    stdout+stderr, keep the last 10 000 lines, are never cached, and are killed (process group)
-   when the selection, tab or focus changes; `r` restarts them. A panel without `detail:` shows
-   its selected row as JSON.
+   when the selection, tab or focus changes; `r` restarts them. With no entry for the active panel and
+   no `default`, a content panel shows "nothing for X".
 6. Context change invalidates the whole cache and re-runs roots.
 7. Commands have a timeout (default 30 s, configurable); streams have none.
 
 ## 7. Layout & keys
 
-- Columns: `[left panels][main][right panels]`. Panels go left unless `side: right`; with no
-  right panels the layout is `[left][main]`. Within a column panels stack in declaration order.
+- Columns: `[left][center][right]`, each a stack of panels in declaration order, sized with
+  `size:`. List panels default to the left, content panels to the center. Empty columns vanish;
+  without center panels the left column takes the center's width. There is no implicit main area.
   A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`).
-- Main view = tab bar + scrollable viewport (ANSI passthrough) for the focused row. Streams
+- A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough). Streams
   follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
-  Tabs expand to 4 spaces and `\r` progress lines keep only their final state. It gets the
-  width left over by the side columns (min 10 columns, otherwise the left column takes it).
-- Panel numbers, `tab` order and `1..9` follow the screen: left column top→bottom, then right.
+  Tabs expand to 4 spaces and `\r` progress lines keep only their final state.
+- Panel numbers, `tab` order and `1..9` follow the screen: left, center, right, top→bottom.
+  Content panels are focusable: `j/k` then scroll them. `[`/`]`, `J/K` and `ctrl-d/u` act on
+  the focused content panel, or the first one when a list panel is focused.
 - Bottom line: key hints for the focused panel's actions + status/errors.
 
 ```yaml
@@ -259,8 +285,8 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `j/k`, arrows | move cursor |
 | `tab` / `shift-tab`, `1..9` | focus panel |
 | `enter` / `esc` | drill in / back |
-| `[` / `]` | previous / next detail tab |
-| `ctrl-d/u`, `J/K` | scroll main view |
+| `[` / `]` | previous / next content tab |
+| `ctrl-d/u`, `J/K` | scroll content panel |
 | `/` | filter rows in focused panel |
 | `r` | refresh focused panel |
 | `c` | context picker |
@@ -302,7 +328,7 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 
 1. **M1 — static lists**: `def` + `tmpl` + `rows` + `runner`; single panel renders; `lint`.
 2. **M2 — reactive panels**: driven panels, debounce/cancel, cache, stale, cursor-by-key.
-3. **M3 — detail view**: tabs, `once` + `stream` modes, scrolling.
+3. **M3 — content view** (now content panels): tabs, `once` + `stream` modes, scrolling.
 4. **M4 — actions**: background/interactive, prompt, confirm, refresh-after.
 5. **M5 — drill-in, context, columns, auto-refresh, filter.**
 6. Ship example definitions: git-lite, cloudwatch, ecs.
@@ -310,7 +336,7 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 ## 12. Open questions / to iterate
 
 - **Panel tabs** (lazygit's Local Branches / Remotes / Tags in one box): multiple panels
-  sharing one slot, switched with `[`/`]` when the panel is focused? Conflicts with detail-tab keys.
+  sharing one slot, switched with `[`/`]` when the panel is focused? Conflicts with content-tab keys.
 - **Colours/status**: declarative value→colour map, e.g.
   `color: { value: "{{.lastStatus}}", map: { RUNNING: green, STOPPED: red } }` — no expressions.
 - Display helpers (basename of an ARN, relative time) without becoming a language — a fixed

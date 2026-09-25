@@ -41,16 +41,17 @@ panels:
       - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
       - { title: Status, value: "{{.lastStatus}}" }
 
-detail:
-  services:
-    tabs:
-      - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
-      - { name: JSON,   cmd: "echo {{.}}", format: json }
-  tasks:
-    tabs:
-      - name: Logs
-        mode: stream
-        cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
+  - id: main
+    content:
+      services:
+        tabs:
+          - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
+          - { name: JSON,   cmd: "echo {{.}}", format: json }
+      tasks:
+        tabs:
+          - name: Logs
+            mode: stream
+            cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
 
 actions:
   services:

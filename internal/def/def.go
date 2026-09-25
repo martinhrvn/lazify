@@ -39,7 +39,6 @@ type Definition struct {
 	ContextOrder []string
 	Env          map[string]*tmpl.Template
 	Panels       []*Panel
-	Detail       map[string]*Detail
 	Actions      map[string][]*Action
 	Layout       Layout
 	// Order lists panel ids so that every panel comes after the panels it depends on.
@@ -90,8 +89,11 @@ type Panel struct {
 	Children string
 	Parent   string // set on the panel named by another panel's Children
 	Refresh  time.Duration
-	Side     string // left | right
+	Side     string // left | center | right
 	Size     Size
+	// Content makes this a content panel: what to show, keyed by the active
+	// list panel's id or "default". Nil for list panels.
+	Content map[string]*Content
 	// Deps are the panels whose selection this panel's source needs, in
 	// declaration order. A drill-in child also depends on its parent.
 	Deps []string
@@ -103,12 +105,12 @@ type Column struct {
 	Value *tmpl.Template
 }
 
-// Detail holds the main-view tabs for a panel.
-type Detail struct {
+// Content is what a content panel shows for one active panel: a set of tabs.
+type Content struct {
 	Tabs []*Tab
 }
 
-// Tab is one detail tab.
+// Tab is one tab of a content panel.
 type Tab struct {
 	Name   string
 	Cmd    *tmpl.Template
@@ -127,6 +129,9 @@ type Action struct {
 	Mode    string // background | interactive
 	Refresh []string
 }
+
+// IsContent reports whether p is a content panel (as opposed to a list panel).
+func (p *Panel) IsContent() bool { return p.Content != nil }
 
 // Panel returns the panel with the given id, or nil.
 func (d *Definition) Panel(id string) *Panel {
@@ -189,7 +194,7 @@ type rawDef struct {
 	Context map[string]rawCtx      `yaml:"context"`
 	Env     map[string]string      `yaml:"env"`
 	Panels  []rawPanel             `yaml:"panels"`
-	Detail  map[string]rawDetail   `yaml:"detail"`
+	Detail  yaml.Node              `yaml:"detail"` // removed; kept to explain the migration
 	Actions map[string][]rawAction `yaml:"actions"`
 	Layout  rawLayout              `yaml:"layout"`
 }
@@ -207,18 +212,19 @@ type rawCtx struct {
 }
 
 type rawPanel struct {
-	ID       string      `yaml:"id"`
-	Title    string      `yaml:"title"`
-	Source   string      `yaml:"source"`
-	Rows     string      `yaml:"rows"`
-	Split    string      `yaml:"split"`
-	Label    string      `yaml:"label"`
-	Columns  []rawColumn `yaml:"columns"`
-	Key      string      `yaml:"key"`
-	Children string      `yaml:"children"`
-	Refresh  string      `yaml:"refresh"`
-	Size     string      `yaml:"size"`
-	Side     string      `yaml:"side"`
+	ID       string                `yaml:"id"`
+	Title    string                `yaml:"title"`
+	Source   string                `yaml:"source"`
+	Rows     string                `yaml:"rows"`
+	Split    string                `yaml:"split"`
+	Label    string                `yaml:"label"`
+	Columns  []rawColumn           `yaml:"columns"`
+	Key      string                `yaml:"key"`
+	Children string                `yaml:"children"`
+	Refresh  string                `yaml:"refresh"`
+	Size     string                `yaml:"size"`
+	Side     string                `yaml:"side"`
+	Content  map[string]rawContent `yaml:"content"`
 }
 
 type rawColumn struct {
@@ -226,7 +232,7 @@ type rawColumn struct {
 	Value string `yaml:"value"`
 }
 
-type rawDetail struct {
+type rawContent struct {
 	Tabs []rawTab `yaml:"tabs"`
 }
 
@@ -255,7 +261,7 @@ var unknownFieldRe = regexp.MustCompile(`^field (\S+) not found in type def\.raw
 
 var rawTypeNames = map[string]string{
 	"Def": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
-	"Detail": "detail", "Tab": "tab", "Action": "action", "Layout": "layout",
+	"Content": "content", "Tab": "tab", "Action": "action", "Layout": "layout",
 }
 
 // Parse validates a definition from YAML. file is used in error messages.
@@ -350,7 +356,8 @@ func (v *validator) line(path ...any) int {
 	return line
 }
 
-// mapKeys returns a mapping's keys in file order.
+// mapKeys returns the keys of the mapping at path (string keys, int indexes)
+// in file order.
 func (v *validator) mapKeys(path ...any) []string {
 	n := v.root
 	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
@@ -358,9 +365,16 @@ func (v *validator) mapKeys(path ...any) []string {
 	}
 	for _, p := range path {
 		var next *yaml.Node
-		for i := 0; n.Kind == yaml.MappingNode && i+1 < len(n.Content); i += 2 {
-			if n.Content[i].Value == p {
-				next = n.Content[i+1]
+		switch key := p.(type) {
+		case string:
+			for i := 0; n.Kind == yaml.MappingNode && i+1 < len(n.Content); i += 2 {
+				if n.Content[i].Value == key {
+					next = n.Content[i+1]
+				}
+			}
+		case int:
+			if n.Kind == yaml.SequenceNode && key < len(n.Content) {
+				next = n.Content[key]
 			}
 		}
 		if next == nil {
@@ -410,6 +424,8 @@ func (v *validator) template(line int, what, src string, d *Definition, r refRul
 				v.errorf(line, "%s: panel references itself ({{%s}})", what, ref)
 			case d.Panel(ref.Scope) == nil:
 				v.errorf(line, "%s: unknown panel %q", what, ref.Scope)
+			case d.Panel(ref.Scope).IsContent():
+				v.errorf(line, "%s: {{%s}}: %s is a content panel and has no rows", what, ref, ref.Scope)
 			case !slices.Contains(deps, ref.Scope):
 				deps = append(deps, ref.Scope)
 			}
@@ -425,7 +441,6 @@ func (v *validator) build(raw *rawDef) *Definition {
 		Timeout: DefaultTimeout,
 		Context: map[string]*ContextVar{},
 		Env:     map[string]*tmpl.Template{},
-		Detail:  map[string]*Detail{},
 		Actions: map[string][]*Action{},
 	}
 	if d.Name == "" {
@@ -477,7 +492,7 @@ func (v *validator) build(raw *rawDef) *Definition {
 		case !idRe.MatchString(rp.ID):
 			v.errorf(line, "panel %s: invalid id (use letters, digits, _ and -)", rp.ID)
 			continue
-		case rp.ID == tmpl.ScopeCtx || rp.ID == tmpl.ScopeInput:
+		case rp.ID == tmpl.ScopeCtx || rp.ID == tmpl.ScopeInput || rp.ID == "default":
 			v.errorf(line, "panel %s: id is reserved", rp.ID)
 			continue
 		case d.Panel(rp.ID) != nil:
@@ -488,73 +503,39 @@ func (v *validator) build(raw *rawDef) *Definition {
 		if title == "" {
 			title = rp.ID
 		}
-		d.Panels = append(d.Panels, &Panel{ID: rp.ID, Title: title})
+		p := &Panel{ID: rp.ID, Title: title}
+		if rp.Content != nil {
+			p.Content = map[string]*Content{}
+		}
+		d.Panels = append(d.Panels, p)
 	}
 
 	// Pass 2: everything else.
+	built := map[string]bool{}
 	for i, rp := range raw.Panels {
 		p := d.Panel(rp.ID)
-		if p == nil || p.Source != nil {
+		if p == nil || built[p.ID] {
 			continue // invalid id, or the duplicate of an already-built panel
 		}
+		built[p.ID] = true
 		at := func(field string) int { return v.line("panels", i, field) }
 		what := "panel " + p.ID
 
-		if rp.Source == "" {
-			v.errorf(v.line("panels", i), "%s: source is required", what)
+		if p.IsContent() {
+			v.contentPanel(d, p, rp, i)
 		} else {
-			p.Source, p.Deps = v.template(at("source"), what+": source", rp.Source, d,
-				refRules{panels: true, self: p.ID})
+			v.listPanel(d, p, rp, i)
 		}
 
-		p.Rows, p.Split = rp.Rows, rp.Split
-		if rp.Rows != "" && rp.Split != "" {
-			v.errorf(at("split"), "%s: split only applies to line output, not with rows", what)
-		}
-		if parser, err := rows.New(rp.Rows, rp.Split); err != nil {
-			v.errorf(at("rows"), "%s: %v", what, err)
-		} else {
-			p.Parser = parser
-		}
-
-		if rp.Label != "" && len(rp.Columns) > 0 {
-			v.errorf(at("label"), "%s: use either label and columns, not both", what)
-		}
-		display := refRules{row: true, panels: true}
-		if rp.Label != "" {
-			p.Label, _ = v.template(at("label"), what+": label", rp.Label, d, display)
-		}
-		for ci, rc := range rp.Columns {
-			line := v.line("panels", i, "columns", ci)
-			if rc.Value == "" {
-				v.errorf(line, "%s: column %d: value is required", what, ci+1)
-				continue
-			}
-			t, _ := v.template(line, what+": column", rc.Value, d, display)
-			p.Columns = append(p.Columns, Column{Title: rc.Title, Value: t})
-		}
-		if p.Label == nil && len(p.Columns) == 0 {
-			if rp.Rows == "" {
-				p.Label = tmpl.MustParse("{{.line}}")
-			} else {
-				p.Label = tmpl.MustParse("{{.}}")
+		p.Side = rp.Side
+		if p.Side == "" {
+			p.Side = "left"
+			if p.IsContent() {
+				p.Side = "center"
 			}
 		}
-
-		if rp.Key != "" {
-			p.Key = v.keyPath(at("key"), what, rp.Key)
-		}
-		if rp.Refresh != "" {
-			r, err := time.ParseDuration(rp.Refresh)
-			if err != nil || r <= 0 {
-				v.errorf(at("refresh"), "%s: refresh: invalid duration %q", what, rp.Refresh)
-			}
-			p.Refresh = r
-		}
-
-		p.Side = or(rp.Side, "left")
-		if p.Side != "left" && p.Side != "right" {
-			v.errorf(at("side"), "%s: side must be left or right, got %q", what, rp.Side)
+		if p.Side != "left" && p.Side != "center" && p.Side != "right" {
+			v.errorf(at("side"), "%s: side must be left, center or right, got %q", what, rp.Side)
 		}
 		p.Size = Size{Kind: Flex, N: 1}
 		if rp.Size != "" {
@@ -562,20 +543,6 @@ func (v *validator) build(raw *rawDef) *Definition {
 				p.Size = s
 			} else {
 				v.errorf(at("size"), "%s: size must be fit, a line count or <n>fr, got %q", what, rp.Size)
-			}
-		}
-
-		if rp.Children != "" {
-			child := d.Panel(rp.Children)
-			switch {
-			case child == nil:
-				v.errorf(at("children"), "%s: children: unknown panel %q", what, rp.Children)
-			case child == p:
-				v.errorf(at("children"), "%s: children: a panel cannot drill into itself", what)
-			case child.Parent != "":
-				v.errorf(at("children"), "%s: children: %s is already a child of %s", what, child.ID, child.Parent)
-			default:
-				p.Children, child.Parent = child.ID, p.ID
 			}
 		}
 	}
@@ -594,36 +561,8 @@ func (v *validator) build(raw *rawDef) *Definition {
 	v.order(d)
 	v.layout(d, raw.Layout)
 
-	for _, id := range v.mapKeys("detail") {
-		line := v.line("detail", id)
-		if d.Panel(id) == nil {
-			v.errorf(line, "detail: unknown panel %q", id)
-			continue
-		}
-		det := &Detail{}
-		for ti, rt := range raw.Detail[id].Tabs {
-			tl := v.line("detail", id, "tabs", ti)
-			what := fmt.Sprintf("detail %s: tab %q", id, rt.Name)
-			tab := &Tab{Name: rt.Name, Mode: or(rt.Mode, "once"), Format: or(rt.Format, "text")}
-			if tab.Name == "" {
-				v.errorf(tl, "detail %s: tab %d: name is required", id, ti+1)
-			}
-			if rt.Cmd == "" {
-				v.errorf(tl, "%s: cmd is required", what)
-			} else {
-				tab.Cmd, tab.Deps = v.template(tl, what, rt.Cmd, d, refRules{row: true, panels: true})
-			}
-			if tab.Mode != "once" && tab.Mode != "stream" {
-				v.errorf(tl, "%s: mode must be once or stream, got %q", what, tab.Mode)
-			}
-			if tab.Format != "text" && tab.Format != "json" {
-				v.errorf(tl, "%s: format must be text or json, got %q", what, tab.Format)
-			} else if tab.Format == "json" && tab.Mode == "stream" {
-				v.errorf(tl, "%s: format json is only supported with mode once", what)
-			}
-			det.Tabs = append(det.Tabs, tab)
-		}
-		d.Detail[id] = det
+	if raw.Detail.Kind != 0 {
+		v.errorf(v.line("detail"), "detail: was replaced by content panels — move each entry under a panel's content: (see docs/design.md)")
 	}
 
 	for _, id := range v.mapKeys("actions") {
@@ -713,6 +652,137 @@ func parseSize(s string) (Size, bool) {
 		return Size{}, false
 	}
 	return Size{Kind: kind, N: n}, true
+}
+
+// listPanel validates the fields of a list panel: a source and how its rows
+// are parsed, displayed and drilled into.
+func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
+	at := func(field string) int { return v.line("panels", i, field) }
+	what := "panel " + p.ID
+
+	if rp.Source == "" {
+		v.errorf(v.line("panels", i), "%s: source is required (or content, for a content panel)", what)
+	} else {
+		p.Source, p.Deps = v.template(at("source"), what+": source", rp.Source, d,
+			refRules{panels: true, self: p.ID})
+	}
+
+	p.Rows, p.Split = rp.Rows, rp.Split
+	if rp.Rows != "" && rp.Split != "" {
+		v.errorf(at("split"), "%s: split only applies to line output, not with rows", what)
+	}
+	if parser, err := rows.New(rp.Rows, rp.Split); err != nil {
+		v.errorf(at("rows"), "%s: %v", what, err)
+	} else {
+		p.Parser = parser
+	}
+
+	if rp.Label != "" && len(rp.Columns) > 0 {
+		v.errorf(at("label"), "%s: use either label and columns, not both", what)
+	}
+	display := refRules{row: true, panels: true}
+	if rp.Label != "" {
+		p.Label, _ = v.template(at("label"), what+": label", rp.Label, d, display)
+	}
+	for ci, rc := range rp.Columns {
+		line := v.line("panels", i, "columns", ci)
+		if rc.Value == "" {
+			v.errorf(line, "%s: column %d: value is required", what, ci+1)
+			continue
+		}
+		t, _ := v.template(line, what+": column", rc.Value, d, display)
+		p.Columns = append(p.Columns, Column{Title: rc.Title, Value: t})
+	}
+	if p.Label == nil && len(p.Columns) == 0 {
+		if rp.Rows == "" {
+			p.Label = tmpl.MustParse("{{.line}}")
+		} else {
+			p.Label = tmpl.MustParse("{{.}}")
+		}
+	}
+
+	if rp.Key != "" {
+		p.Key = v.keyPath(at("key"), what, rp.Key)
+	}
+	if rp.Refresh != "" {
+		r, err := time.ParseDuration(rp.Refresh)
+		if err != nil || r <= 0 {
+			v.errorf(at("refresh"), "%s: refresh: invalid duration %q", what, rp.Refresh)
+		}
+		p.Refresh = r
+	}
+
+	if rp.Children != "" {
+		child := d.Panel(rp.Children)
+		switch {
+		case child == nil:
+			v.errorf(at("children"), "%s: children: unknown panel %q", what, rp.Children)
+		case child == p:
+			v.errorf(at("children"), "%s: children: a panel cannot drill into itself", what)
+		case child.IsContent():
+			v.errorf(at("children"), "%s: children: %s is a content panel", what, child.ID)
+		case child.Parent != "":
+			v.errorf(at("children"), "%s: children: %s is already a child of %s", what, child.ID, child.Parent)
+		default:
+			p.Children, child.Parent = child.ID, p.ID
+		}
+	}
+}
+
+// contentPanel validates a content panel: for each active list panel (or
+// "default"), the tabs to show.
+func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
+	what := "panel " + p.ID
+	if rp.Source != "" {
+		v.errorf(v.line("panels", i, "source"), "%s: use either source or content, not both", what)
+	}
+	for field, set := range map[string]bool{
+		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "",
+		"refresh": rp.Refresh != "",
+	} {
+		if set {
+			v.errorf(v.line("panels", i, field), "%s: %s only applies to list panels", what, field)
+		}
+	}
+
+	for _, key := range v.mapKeys("panels", i, "content") {
+		line := v.line("panels", i, "content", key)
+		if key != "default" {
+			switch src := d.Panel(key); {
+			case src == nil:
+				v.errorf(line, "%s: content: unknown panel %q", what, key)
+				continue
+			case src.IsContent():
+				v.errorf(line, "%s: content: %s is a content panel; use the id of a list panel", what, key)
+				continue
+			}
+		}
+		c := &Content{}
+		for ti, rt := range rp.Content[key].Tabs {
+			tl := v.line("panels", i, "content", key, "tabs", ti)
+			tw := fmt.Sprintf("%s: content %s: tab %q", what, key, rt.Name)
+			tab := &Tab{Name: rt.Name, Mode: or(rt.Mode, "once"), Format: or(rt.Format, "text")}
+			if tab.Name == "" {
+				v.errorf(tl, "%s: content %s: tab %d: name is required", what, key, ti+1)
+			}
+			if rt.Cmd == "" {
+				v.errorf(tl, "%s: cmd is required", tw)
+			} else {
+				tab.Cmd, tab.Deps = v.template(tl, tw, rt.Cmd, d, refRules{row: true, panels: true})
+			}
+			if tab.Mode != "once" && tab.Mode != "stream" {
+				v.errorf(tl, "%s: mode must be once or stream, got %q", tw, tab.Mode)
+			}
+			if tab.Format != "text" && tab.Format != "json" {
+				v.errorf(tl, "%s: format must be text or json, got %q", tw, tab.Format)
+			} else if tab.Format == "json" && tab.Mode == "stream" {
+				v.errorf(tl, "%s: format json is only supported with mode once", tw)
+			}
+			c.Tabs = append(c.Tabs, tab)
+		}
+		p.Content[key] = c
+	}
 }
 
 // keyPath parses a row path such as `.fields.0`.
