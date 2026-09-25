@@ -167,7 +167,7 @@ func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
-	{"?", "help"}, {"q", "quit"},
+	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"?", "help"}, {"q", "quit"},
 }
 
 // statusLine is the bottom line: an open prompt or confirmation, otherwise
@@ -199,6 +199,12 @@ func (m Model) statusLine() string {
 		hints = append(hints, h)
 		used += ansi.StringWidth(h) + 3
 		return true
+	}
+	if title, ok := m.eng.EnterTarget(); ok {
+		add("enter", title)
+	}
+	if m.eng.CanGoBack() {
+		add("esc", "back")
 	}
 	for _, b := range m.eng.Bindings() {
 		if !b.Overridden && !add(b.Key, b.Desc) {

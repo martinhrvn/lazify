@@ -39,7 +39,7 @@ selected branch.
 | **Selection** | The row under the cursor in a panel. Always exactly one (or none if empty). |
 | **Reference** | `{{panel.field}}` in any command — "the value of `field` in `panel`'s current selection". |
 | **Drives** | Panel B references panel A ⇒ B is visible alongside A and re-runs when A's selection changes. |
-| **Drill-in** | Panel B is a `children` of A ⇒ Enter on A replaces A with B in the same slot; Esc returns. |
+| **Enter target** | `enter: B` on A ⇒ Enter on A's selected row opens panel B (list or content) — in A's slot (**drill down**) or over everything (**popup**). B reads the row through `{{A.x}}`. Levels nest; Esc closes the top one. |
 | **List panel** | A panel with a `source`: rows, a cursor, a selection. |
 | **Content panel** | A panel with `content` instead of `source`: shows **tabs** of command output (diffs, logs, live tails) for the **active** panel. Scrolls instead of selecting. |
 | **Active panel** | The last focused list panel. Content panels show `content[active]`, else `content.default`. Focusing a content panel does not change it. |
@@ -73,14 +73,30 @@ panels:
     split: "\t"                                        # line → fields[0], fields[1]
     label: "{{.fields.0}} {{.fields.1}}"
     key: .fields.0
-    children: files                                    # Enter drills in
+    enter: files                                       # Enter drills in
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
+    enter: {panel: file, popup: true}                  # Enter: the whole file at that commit
+  - id: file
+    title: File
+    content:
+      default:
+        tabs:
+          - name: File
+            cmd: git show {{commits.fields.0}}:{{files.line}}
   - id: tags
     title: Tags
     source: git tag --sort=-creatordate
     side: right                                        # right of the main view
+    enter: {panel: tag, popup: {width: 70, height: 80}}
+  - id: tag
+    title: Tag
+    content:
+      default:
+        tabs:
+          - name: Show
+            cmd: git show --stat --color=always {{tags.line}}
   - id: main                                         # a content panel: shows content for the
     title: Main                                      # last focused list panel (center by default)
     content:
@@ -194,7 +210,7 @@ panels:
 | `label` | no | Row display template. Default: `.line` or the whole value. |
 | `columns` | no | List of `{title, value}` rendered as aligned columns (replaces `label`). |
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
-| `children` | no | Panel id to drill into on Enter. That panel is then not shown at top level. |
+| `enter` | no | What Enter opens for the selected row: `enter: <panel id>` drills down (the target replaces this panel in its slot), `enter: {panel: <id>, popup: true \| full \| {width, height}}` opens it in a popup (default 80×80 %). A target has one parent, is hidden until entered, takes no `side`/`size`, and may be a content panel. (Replaces the old `children:`.) |
 | `refresh` | no | Auto re-run interval (e.g. `10s`). |
 | `mark` | no | Highlights "current" rows with `*` (and starts the cursor on the first one). Either a row path — `mark: .current` marks rows where it is truthy (null, false, 0 and blank strings are not) — or a command — `mark: {source: git branch --show-current, match: "{{.line}}"}` marks rows whose `match` (default: `key`, else label) is one of its output lines. The command runs with the panel (refresh, actions) and is cached like rows; failures just show no marks. |
 | `size` | no | Height in its column: `fit` (content height, capped at a fair share), `<n>` (fixed lines) or `<n>fr` (flex weight). Default `1fr`. Not allowed on drill-in children. |
@@ -233,11 +249,11 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 ## 6. Reactive model
 
 1. At load, collect references from each panel's `source` → edges `A → B` ("B depends on A").
-   Drill-in children also depend on their parent. **Cycles are a load error.**
+   Enter targets also depend on the panel they are entered from. **Cycles are a load error.**
 2. A panel is **runnable** when every panel it depends on is settled (not loading or pending)
    and has a selection. While an input is loading the panel **waits** (old rows shown stale);
    if an input has no rows it shows an empty "no selection in X" state and does not run.
-   Drill-in children run only when opened.
+   Enter targets run only while open (drilled into or in a popup).
 3. On selection change in A, each dependent B (topological order) re-renders its command:
    - same command as its current rows → nothing to do (e.g. the referenced field didn't change);
    - cached → rows swap in **immediately**, no debounce;
@@ -264,7 +280,9 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 - Columns: `[left][center][right]`, each a stack of panels in declaration order, sized with
   `size:`. List panels default to the left, content panels to the center. Empty columns vanish;
   without center panels the left column takes the center's width. There is no implicit main area.
-  A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`).
+  A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`);
+  a popup is drawn centered over the UI and keeps focus (`tab`/`1-9` do nothing) until `esc`.
+  Esc closes the top popup, else the focused slot's deepest level, else dismisses an action error.
 - A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough). Streams
   follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
   Tabs expand to 4 spaces and `\r` progress lines keep only their final state.
@@ -290,7 +308,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 |---|---|
 | `j/k`, arrows | move cursor |
 | `tab` / `shift-tab`, `1..9` | focus panel |
-| `enter` / `esc` | drill in / back |
+| `enter` / `esc` | open the Enter target (drill down or popup) / go back one level or close the popup |
 | `[` / `]` | previous / next content tab |
 | `ctrl-d/u`, `J/K` | scroll content panel |
 | `/` | filter rows in focused panel |

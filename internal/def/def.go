@@ -75,21 +75,21 @@ type ContextVar struct {
 
 // Panel is a list fed by a shell command.
 type Panel struct {
-	ID       string
-	Title    string
-	Source   *tmpl.Template
-	Rows     string
-	Split    string
-	Parser   *rows.Parser
-	Label    *tmpl.Template // nil when Columns are used
-	Columns  []Column
-	Key      []string // path into the row; nil = use the rendered label
-	Children string
-	Parent   string // set on the panel named by another panel's Children
-	Refresh  time.Duration
-	Mark     *Mark  // which rows to highlight as current; nil = none
-	Side     string // left | center | right
-	Size     Size
+	ID      string
+	Title   string
+	Source  *tmpl.Template
+	Rows    string
+	Split   string
+	Parser  *rows.Parser
+	Label   *tmpl.Template // nil when Columns are used
+	Columns []Column
+	Key     []string // path into the row; nil = use the rendered label
+	Enter   *Enter   // what Enter opens for the selected row; nil = nothing
+	Parent  string   // set on the panel another panel's Enter opens
+	Refresh time.Duration
+	Mark    *Mark  // which rows to highlight as current; nil = none
+	Side    string // left | center | right
+	Size    Size
 	// Content makes this a content panel: what to show, keyed by the active
 	// list panel's id or "default". Nil for list panels.
 	Content map[string]*Content
@@ -107,6 +107,15 @@ type Mark struct {
 	Path   []string
 	Source *tmpl.Template
 	Match  *tmpl.Template
+}
+
+// Enter is what pressing Enter on a row opens: the target panel, either in
+// place of this one (drill down) or in a popup of Width×Height percent.
+type Enter struct {
+	Panel         string
+	Popup         bool
+	Full          bool
+	Width, Height int
 }
 
 // Column is one aligned column of a panel's rows.
@@ -231,7 +240,8 @@ type rawPanel struct {
 	Label    string                `yaml:"label"`
 	Columns  []rawColumn           `yaml:"columns"`
 	Key      string                `yaml:"key"`
-	Children string                `yaml:"children"`
+	Children string                `yaml:"children"` // renamed to enter; kept to explain
+	Enter    yaml.Node             `yaml:"enter"`
 	Refresh  string                `yaml:"refresh"`
 	Size     string                `yaml:"size"`
 	Side     string                `yaml:"side"`
@@ -716,19 +726,10 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 
 	if rp.Children != "" {
-		child := d.Panel(rp.Children)
-		switch {
-		case child == nil:
-			v.errorf(at("children"), "%s: children: unknown panel %q", what, rp.Children)
-		case child == p:
-			v.errorf(at("children"), "%s: children: a panel cannot drill into itself", what)
-		case child.IsContent():
-			v.errorf(at("children"), "%s: children: %s is a content panel", what, child.ID)
-		case child.Parent != "":
-			v.errorf(at("children"), "%s: children: %s is already a child of %s", what, child.ID, child.Parent)
-		default:
-			p.Children, child.Parent = child.ID, p.ID
-		}
+		v.errorf(at("children"), "%s: children: was renamed to enter: (drill down), or use enter: {panel: %s, popup: true}", what, rp.Children)
+	}
+	if rp.Enter.Kind != 0 {
+		p.Enter = v.enter(d, p, rp.Enter, at("enter"))
 	}
 }
 
@@ -741,7 +742,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
-		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "",
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0,
 		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
 	} {
 		if set {
@@ -895,4 +896,78 @@ func (v *validator) mark(d *Definition, p *Panel, n yaml.Node, line int) *Mark {
 		m.Match, _ = v.template(line, what+": match", match, d, refRules{row: true, panels: true})
 	}
 	return m
+}
+
+// enter validates a panel's enter: a panel id (drill down), or
+// {panel, popup: true | full | {width, height}}.
+func (v *validator) enter(d *Definition, p *Panel, n yaml.Node, line int) *Enter {
+	what := "panel " + p.ID + ": enter"
+	e := &Enter{}
+	switch n.Kind {
+	case yaml.ScalarNode:
+		e.Panel = n.Value
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, val := n.Content[i], n.Content[i+1]
+			switch k.Value {
+			case "panel":
+				e.Panel = val.Value
+			case "popup":
+				v.popup(e, val, what)
+			default:
+				v.errorf(k.Line, "%s: unknown field %q (use panel and popup)", what, k.Value)
+			}
+		}
+	default:
+		v.errorf(line, "%s: must be a panel id or {panel: ..., popup: ...}", what)
+		return nil
+	}
+
+	target := d.Panel(e.Panel)
+	switch {
+	case e.Panel == "":
+		v.errorf(line, "%s: panel is required", what)
+	case target == nil:
+		v.errorf(line, "%s: unknown panel %q", what, e.Panel)
+	case target == p:
+		v.errorf(line, "%s: a panel cannot enter itself", what)
+	case target.Parent != "":
+		v.errorf(line, "%s: %s is already entered from %s", what, target.ID, target.Parent)
+	default:
+		target.Parent = p.ID
+		return e
+	}
+	return nil
+}
+
+func (v *validator) popup(e *Enter, n *yaml.Node, what string) {
+	bad := func() { v.errorf(n.Line, "%s: popup must be true, full or {width, height} (percent)", what) }
+	switch {
+	case n.Kind == yaml.ScalarNode && n.Value == "false":
+	case n.Kind == yaml.ScalarNode && n.Value == "true":
+		e.Popup, e.Width, e.Height = true, 80, 80
+	case n.Kind == yaml.ScalarNode && n.Value == "full":
+		e.Popup, e.Full, e.Width, e.Height = true, true, 100, 100
+	case n.Kind == yaml.MappingNode:
+		e.Popup, e.Width, e.Height = true, 80, 80
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, val := n.Content[i], n.Content[i+1]
+			pct, err := strconv.Atoi(val.Value)
+			if k.Value != "width" && k.Value != "height" {
+				v.errorf(k.Line, "%s: popup: unknown field %q (use width and height)", what, k.Value)
+				continue
+			}
+			if err != nil || pct < 10 || pct > 100 {
+				v.errorf(val.Line, "%s: popup %s must be between 10 and 100 (percent), got %q", what, k.Value, val.Value)
+				continue
+			}
+			if k.Value == "width" {
+				e.Width = pct
+			} else {
+				e.Height = pct
+			}
+		}
+	default:
+		bad()
+	}
 }

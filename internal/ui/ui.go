@@ -209,7 +209,12 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.modal = modalHelp
 		m.helpVP.reset(false)
+	case "enter":
+		return m, m.apply(m.eng.Enter())
 	case "esc":
+		if fx, ok := m.eng.Back(); ok {
+			return m, m.apply(fx)
+		}
 		m.toast = nil
 	default:
 		if ref, ok := m.eng.ActionFor(k); ok {
@@ -264,6 +269,9 @@ func (m Model) View() string {
 		}
 	}
 	view := lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
+	if pv, ok := m.eng.Popup(); ok {
+		view = overlay(view, m.popupBox(pv, bodyH), m.width)
+	}
 	if m.modal == modalHelp {
 		view = overlay(view, m.helpBox(m.width, m.height), m.width)
 	}
@@ -273,12 +281,14 @@ func (m Model) View() string {
 // column stacks panels in a box each, sized by the definition's layout rules,
 // clipped or padded to exactly h lines.
 func (m Model) column(ids []string, w, h int) string {
+	// Each slot shows the top of its drill-down stack, sized by the slot's rules.
 	slots := make([]slot, len(ids))
 	for i, id := range ids {
+		top := m.eng.Top(id)
 		slots[i] = slot{
 			size:    m.def.Panel(id).Size,
-			content: m.wantLines(id),
-			focused: id == m.eng.Focused(),
+			content: m.wantLines(top),
+			focused: top == m.eng.Focused(),
 		}
 	}
 	hs := heights(h-2*len(ids), slots, m.def.Layout.Focus) // each box has 2 border lines
@@ -286,13 +296,8 @@ func (m Model) column(ids []string, w, h int) string {
 	boxes := make([]string, len(ids))
 	for i, id := range ids {
 		num := fmt.Sprintf("[%d] ", slices.Index(all, id)+1)
-		focused := id == m.eng.Focused()
-		if m.eng.IsContent(id) {
-			title, lines := m.contentBox(id, hs[i])
-			boxes[i] = box(num+title, lines, w, hs[i], focused)
-		} else {
-			boxes[i] = box(num+m.eng.View(id).Title, m.panelLines(id, w-2, hs[i]), w, hs[i], focused)
-		}
+		title, lines := m.panelBox(m.eng.Top(id), m.eng.Crumbs(id), w, hs[i])
+		boxes[i] = box(num+title, lines, w, hs[i], m.eng.Top(id) == m.eng.Focused())
 	}
 	return clip(lipgloss.JoinVertical(lipgloss.Left, boxes...), w, h)
 }
@@ -468,10 +473,7 @@ func (m Model) scrollContent(id string, delta int, halfPages bool) {
 // syncViewports resets a content panel's scrolling when it shows different
 // content: streams start following the tail, everything else starts at the top.
 func (m *Model) syncViewports() {
-	for _, id := range m.eng.TopLevel() {
-		if !m.eng.IsContent(id) {
-			continue
-		}
+	for _, id := range m.eng.ContentPanels() {
 		if v := m.eng.ContentView(id); v.ID != m.vpIDs[id] {
 			m.vpIDs[id] = v.ID
 			m.viewport(id).reset(v.Live)

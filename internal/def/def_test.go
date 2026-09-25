@@ -16,12 +16,12 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Name != "git-lite" {
 		t.Errorf("Name = %q", d.Name)
 	}
-	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "tags", "main"}) {
+	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "file", "tags", "tag", "main"}) {
 		t.Errorf("panels = %v", got)
 	}
 	commits, files := d.Panel("commits"), d.Panel("files")
-	if commits.Children != "files" || files.Parent != "commits" {
-		t.Errorf("children/parent = %q/%q", commits.Children, files.Parent)
+	if commits.Enter == nil || commits.Enter.Panel != "files" || commits.Enter.Popup || files.Parent != "commits" {
+		t.Errorf("enter/parent = %+v/%q", commits.Enter, files.Parent)
 	}
 	if !reflect.DeepEqual(commits.Deps, []string{"branches"}) {
 		t.Errorf("commits deps = %v", commits.Deps)
@@ -29,7 +29,7 @@ func TestLoadGitExample(t *testing.T) {
 	if !reflect.DeepEqual(files.Deps, []string{"commits"}) {
 		t.Errorf("files deps = %v", files.Deps)
 	}
-	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "tags", "main"}) {
+	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "file", "tags", "tag", "main"}) {
 		t.Errorf("order = %v", d.Order)
 	}
 	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "tags", "main"}) {
@@ -157,9 +157,9 @@ func TestValidationErrors(t *testing.T) {
 		{"column without value", "panels:\n  - {id: a, source: x, columns: [{title: t}]}", "value is required"},
 		{"bad key", "panels:\n  - {id: a, source: x, key: 'foo'}", "key"},
 		{"bad refresh", "panels:\n  - {id: a, source: x, refresh: soon}", "refresh"},
-		{"unknown child", "panels:\n  - {id: a, source: x, children: b}", "children: unknown panel \"b\""},
-		{"self child", "panels:\n  - {id: a, source: x, children: a}", "children"},
-		{"two parents", "panels:\n  - {id: a, source: x, children: c}\n  - {id: b, source: x, children: c}\n  - {id: c, source: x}", "already a child of a"},
+		{"unknown enter target", "panels:\n  - {id: a, source: x, enter: b}", "panel a: enter: unknown panel \"b\""},
+		{"enter self", "panels:\n  - {id: a, source: x, enter: a}", "panel a: enter: a panel cannot enter itself"},
+		{"two parents", "panels:\n  - {id: a, source: x, enter: c}\n  - {id: b, source: x, enter: c}\n  - {id: c, source: x}", "c is already entered from a"},
 		{"content unknown panel", "panels:\n  - {id: a, source: x}\n  - id: m\n    content:\n      b: {tabs: [{name: n, cmd: c}]}", "t.yaml:5: panel m: content: unknown panel \"b\""},
 		{"content key is content panel", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {n: {tabs: [{name: t, cmd: c}]}}}\n  - {id: n, content: {a: {tabs: [{name: t, cmd: c}]}}}", "panel m: content: n is a content panel"},
 		{"tab without cmd", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n}]}}}", "cmd is required"},
@@ -169,8 +169,12 @@ func TestValidationErrors(t *testing.T) {
 		{"tab unknown ref", "panels:\n  - {id: a, source: x}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: 'c {{z.q}}'}]}}}", "unknown panel \"z\""},
 		{"source and content", "panels:\n  - {id: a, source: x, content: {default: {tabs: [{name: n, cmd: c}]}}}", "panel a: use either source or content, not both"},
 		{"list field on content", "panels:\n  - {id: a, source: x}\n  - {id: m, rows: '.', content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: rows only applies to list panels"},
-		{"children on content", "panels:\n  - {id: a, source: x}\n  - {id: m, children: a, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: children only applies to list panels"},
-		{"content panel as child", "panels:\n  - {id: a, source: x, children: m}\n  - {id: m, content: {a: {tabs: [{name: n, cmd: c}]}}}", "children: m is a content panel"},
+		{"enter on content", "panels:\n  - {id: a, source: x}\n  - {id: m, enter: a, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: enter only applies to list panels"},
+		{"old children", "panels:\n  - id: a\n    source: x\n    children: b\n  - {id: b, source: x}", "t.yaml:4: panel a: children: was renamed to enter:"},
+		{"popup bad size", "panels:\n  - {id: a, source: x, enter: {panel: b, popup: {width: 5}}}\n  - {id: b, source: x}", "popup width must be between 10 and 100"},
+		{"popup bad value", "panels:\n  - {id: a, source: x, enter: {panel: b, popup: big}}\n  - {id: b, source: x}", "popup must be true, full or {width, height}"},
+		{"enter map no panel", "panels:\n  - {id: a, source: x, enter: {popup: true}}", "panel a: enter: panel is required"},
+		{"enter unknown field", "panels:\n  - {id: a, source: x, enter: {panel: b, size: 3}}\n  - {id: b, source: x}", "enter: unknown field \"size\""},
 		{"ref to content panel", "panels:\n  - {id: m, content: {default: {tabs: [{name: n, cmd: c}]}}}\n  - {id: a, source: 'x {{m.y}}'}", "m is a content panel and has no rows"},
 		{"default id reserved", "panels:\n  - {id: default, source: x}", "panel default: id is reserved"},
 		{"old detail key", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c}]}", "t.yaml:2: detail: was replaced by content panels"},
@@ -227,7 +231,7 @@ context:
 env:
   R: "{{ctx.region}}"
 panels:
-  - {id: a, source: "x {{ctx.region}}", children: b}
+  - {id: a, source: "x {{ctx.region}}", enter: b}
   - id: b
     source: "x {{a.y}}"
     actions:
@@ -337,8 +341,8 @@ func TestLayoutValidation(t *testing.T) {
 		{"bad size", "panels:\n  - id: a\n    source: x\n    size: big", "t.yaml:4: panel a: size"},
 		{"zero size", "panels: [{id: a, source: x, size: 0}]", "size"},
 		{"zero fr", "panels: [{id: a, source: x, size: 0fr}]", "size"},
-		{"child side", "panels:\n  - {id: a, source: x, children: b}\n  - {id: b, source: x, side: right}", "panel b: side/size not allowed on a drill-in child"},
-		{"child size", "panels:\n  - {id: a, source: x, children: b}\n  - {id: b, source: x, size: fit}", "not allowed on a drill-in child"},
+		{"child side", "panels:\n  - {id: a, source: x, enter: b}\n  - {id: b, source: x, side: right}", "panel b: side/size not allowed on a drill-in child"},
+		{"child size", "panels:\n  - {id: a, source: x, enter: b}\n  - {id: b, source: x, size: fit}", "not allowed on a drill-in child"},
 		{"bad focus", "layout: {focus: grow}\npanels: [{id: a, source: x}]", "t.yaml:1: layout: focus must be expand or equal"},
 		{"narrow", "layout: {left_width: 5}\npanels: [{id: a, source: x}]", "left_width"},
 		{"wide", "layout: {right_width: 85}\npanels: [{id: a, source: x}]", "right_width"},
@@ -482,5 +486,40 @@ panels:
 	}
 	if d.Panel("z").Mark != nil {
 		t.Error("panel without mark has one")
+	}
+}
+
+func TestEnterForms(t *testing.T) {
+	src := `
+panels:
+  - {id: a, source: x, enter: b}
+  - {id: b, source: "y {{a.line}}", enter: {panel: c, popup: true}}
+  - id: c
+    content: {default: {tabs: [{name: n, cmd: "show {{b.line}}"}]}}
+  - {id: d, source: x, enter: {panel: e, popup: full}}
+  - {id: e, source: x}
+  - {id: f, source: x, enter: {panel: g, popup: {width: 60, height: 70}}}
+  - {id: g, source: x}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := map[string]Enter{
+		"a": {Panel: "b"},
+		"b": {Panel: "c", Popup: true, Width: 80, Height: 80},
+		"d": {Panel: "e", Popup: true, Full: true, Width: 100, Height: 100},
+		"f": {Panel: "g", Popup: true, Width: 60, Height: 70},
+	}
+	for id, want := range checks {
+		if got := d.Panel(id).Enter; got == nil || *got != want {
+			t.Errorf("%s enter = %+v, want %+v", id, got, want)
+		}
+	}
+	if d.Panel("c").Parent != "b" || !d.Panel("c").IsContent() {
+		t.Errorf("content target: parent %q", d.Panel("c").Parent)
+	}
+	if !slices.Contains(d.Panel("c").Deps, "b") {
+		t.Errorf("target should depend on its parent: %v", d.Panel("c").Deps)
 	}
 }

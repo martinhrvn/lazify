@@ -152,7 +152,7 @@ func TestFocusCyclesTopLevelPanels(t *testing.T) {
 }
 
 func TestTopLevelExcludesChildren(t *testing.T) {
-	d := mustDef(t, "panels:\n  - {id: a, source: x, children: b}\n  - {id: b, source: 'y {{a.line}}'}")
+	d := mustDef(t, "panels:\n  - {id: a, source: x, enter: b}\n  - {id: b, source: 'y {{a.line}}'}")
 	if got := New(d, nil).TopLevel(); !reflect.DeepEqual(got, []string{"a"}) {
 		t.Errorf("top level = %v", got)
 	}

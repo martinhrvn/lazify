@@ -60,9 +60,31 @@ func (e *Engine) IsContent(id string) bool {
 	return p != nil && p.IsContent()
 }
 
-// contentPanels lists content panels in screen order.
+// contentPanels lists the visible content panels: top-level ones in screen
+// order, then content panels opened with Enter.
 func (e *Engine) contentPanels() []string {
-	return slices.DeleteFunc(e.TopLevel(), func(id string) bool { return !e.IsContent(id) })
+	var ids []string
+	for _, p := range e.def.Panels {
+		if p.IsContent() && (p.Parent == "" || e.isOpen(p.ID)) {
+			ids = append(ids, p.ID)
+		}
+	}
+	top := e.TopLevel()
+	slices.SortStableFunc(ids, func(a, b string) int {
+		return rank(top, a) - rank(top, b)
+	})
+	return ids
+}
+
+// ContentPanels lists the visible content panels (including open Enter targets).
+func (e *Engine) ContentPanels() []string { return e.contentPanels() }
+
+// rank orders top-level panels by screen position, others after them.
+func rank(top []string, id string) int {
+	if i := slices.Index(top, id); i >= 0 {
+		return i
+	}
+	return len(top)
 }
 
 // anyContent reports whether some content panel shows something for the

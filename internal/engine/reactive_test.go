@@ -291,7 +291,7 @@ panels:
 func TestDrillInChildDoesNotRunAtTopLevel(t *testing.T) {
 	src := `
 panels:
-  - {id: commits, source: git log, children: files}
+  - {id: commits, source: git log, enter: files}
   - {id: files, source: "git show {{commits.line}}"}
 `
 	h := newHarness(t, src)

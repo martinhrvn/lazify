@@ -88,7 +88,9 @@ type Engine struct {
 	active   string                     // last focused list panel: what content panels show
 	dcache   map[string][]string        // once-tab output by rendered command
 	mcache   map[string]map[string]bool // mark command output by rendered command
-	focus    int                        // index into TopLevel()
+	focus    int                        // index into TopLevel(): the focused slot
+	stacks   map[string][]string        // per slot: panels entered with Enter (drill down)
+	popups   []popupLevel               // open popups, innermost last
 	nextID   uint64
 	settleID uint64
 	fx       Effects // accumulated by the current call
@@ -105,6 +107,7 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 		dcache: map[string][]string{},
 		mcache: map[string]map[string]bool{},
 		views:  map[string]*viewState{},
+		stacks: map[string][]string{},
 	}
 	for name, cv := range d.Context {
 		e.ctx[name] = cv.Default
@@ -260,8 +263,8 @@ func (e *Engine) propagate(id string, run bool) {
 // evaluate brings one panel up to date with its inputs' selections. With
 // run=false, cache misses are left pending instead of started.
 func (e *Engine) evaluate(ps *panelState, run bool) {
-	if ps.def.Parent != "" || ps.def.IsContent() {
-		return // drill-in children run only when opened; content panels have no source
+	if ps.def.IsContent() || (ps.def.Parent != "" && !e.isOpen(ps.def.ID)) {
+		return // content panels have no source; Enter targets run only while open
 	}
 	for _, dep := range ps.def.Deps {
 		d := e.panels[dep]
@@ -401,9 +404,6 @@ func (e *Engine) TopLevel() []string {
 	return slices.Concat(left, center, right)
 }
 
-// Focused returns the id of the focused panel.
-func (e *Engine) Focused() string { return e.TopLevel()[e.focus] }
-
 // FocusNext focuses the next top-level panel, wrapping around.
 func (e *Engine) FocusNext() Effects { return e.setFocus(e.focus + 1) }
 
@@ -421,6 +421,9 @@ func (e *Engine) FocusPanel(id string) Effects {
 // setFocus focuses TopLevel()[i] (wrapping). Focusing a list panel makes it the
 // active one, and content panels switch to it at once.
 func (e *Engine) setFocus(i int) Effects {
+	if len(e.popups) > 0 {
+		return e.take() // a popup keeps focus until it is closed
+	}
 	n := len(e.TopLevel())
 	e.focus = ((i % n) + n) % n
 	if id := e.Focused(); !e.IsContent(id) {

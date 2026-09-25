@@ -20,14 +20,30 @@ panels:
     split: "\t"                                        # line → fields[0], fields[1]
     label: "{{.fields.0}} {{.fields.1}}"
     key: .fields.0
-    children: files                                    # Enter drills in
+    enter: files                                       # Enter drills in
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
+    enter: {panel: file, popup: true}                  # Enter: the whole file at that commit
+  - id: file
+    title: File
+    content:
+      default:
+        tabs:
+          - name: File
+            cmd: git show {{commits.fields.0}}:{{files.line}}
   - id: tags
     title: Tags
     source: git tag --sort=-creatordate
     side: right                                        # right of the main view
+    enter: {panel: tag, popup: {width: 70, height: 80}}
+  - id: tag
+    title: Tag
+    content:
+      default:
+        tabs:
+          - name: Show
+            cmd: git show --stat --color=always {{tags.line}}
   - id: main                                         # a content panel: shows content for the
     title: Main                                      # last focused list panel (center by default)
     content:
