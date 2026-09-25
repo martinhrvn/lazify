@@ -296,7 +296,11 @@ func (m Model) column(ids []string, w, h int) string {
 	boxes := make([]string, len(ids))
 	for i, id := range ids {
 		num := fmt.Sprintf("[%d] ", slices.Index(all, id)+1)
-		title, lines := m.panelBox(m.eng.Top(id), m.eng.Crumbs(id), w, hs[i])
+		crumbs := m.eng.Crumbs(id)
+		if tabs := m.eng.Tabs(id); len(tabs) > 1 {
+			crumbs[0] = m.tabBar(tabs, m.eng.ActiveTab(id))
+		}
+		title, lines := m.panelBox(m.eng.Top(id), crumbs, w, hs[i])
 		boxes[i] = box(num+title, lines, w, hs[i], m.eng.Top(id) == m.eng.Focused())
 	}
 	return clip(lipgloss.JoinVertical(lipgloss.Left, boxes...), w, h)

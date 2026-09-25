@@ -85,10 +85,14 @@ panels:
         tabs:
           - name: File
             cmd: git show {{commits.fields.0}}:{{files.line}}
+  - id: remotes
+    title: Remotes
+    tab_of: branches                                   # a tab in the Branches slot: [ ] switch
+    source: git branch -r --format='%(refname:short)'
   - id: tags
     title: Tags
+    tab_of: branches
     source: git tag --sort=-creatordate
-    side: right                                        # right of the main view
     enter: {panel: tag, popup: {width: 70, height: 80}}
   - id: tag
     title: Tag
@@ -210,6 +214,7 @@ panels:
 | `label` | no | Row display template. Default: `.line` or the whole value. |
 | `columns` | no | List of `{title, value}` rendered as aligned columns (replaces `label`). |
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
+| `tab_of` | no | Makes this list panel a **tab** in another top-level list panel's slot (lazygit's Branches │ Remotes │ Tags). The owner keeps the slot's side, size and number; tabs are ordered owner first, then in declaration order; `[`/`]` switch. Tabs take no `side`/`size`, can't be Enter targets, and all run like any panel (hidden ones too). |
 | `enter` | no | What Enter opens for the selected row: `enter: <panel id>` drills down (the target replaces this panel in its slot), `enter: {panel: <id>, popup: true \| full \| {width, height}}` opens it in a popup (default 80×80 %). A target has one parent, is hidden until entered, takes no `side`/`size`, and may be a content panel. (Replaces the old `children:`.) |
 | `refresh` | no | Auto re-run interval (e.g. `10s`). |
 | `mark` | no | Highlights "current" rows with `*` (and starts the cursor on the first one). Either a row path — `mark: .current` marks rows where it is truthy (null, false, 0 and blank strings are not) — or a command — `mark: {source: git branch --show-current, match: "{{.line}}"}` marks rows whose `match` (default: `key`, else label) is one of its output lines. The command runs with the panel (refresh, actions) and is cached like rows; failures just show no marks. |
@@ -309,7 +314,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `j/k`, arrows | move cursor |
 | `tab` / `shift-tab`, `1..9` | focus panel |
 | `enter` / `esc` | open the Enter target (drill down or popup) / go back one level or close the popup |
-| `[` / `]` | previous / next content tab |
+| `[` / `]` | previous / next tab: the focused slot's panel tabs, else the (focused or first) content panel's tabs |
 | `ctrl-d/u`, `J/K` | scroll content panel |
 | `/` | filter rows in focused panel |
 | `r` | refresh focused panel |
@@ -380,8 +385,7 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 
 ## 12. Open questions / to iterate
 
-- **Panel tabs** (lazygit's Local Branches / Remotes / Tags in one box): multiple panels
-  sharing one slot, switched with `[`/`]` when the panel is focused? Conflicts with content-tab keys.
+- ~~Panel tabs~~: done — `tab_of:`; `[`/`]` switch the focused slot's panel tabs, else content tabs.
 - ~~Current row indicator~~: done — `mark:` (row path or command output as a set).
 - **Colours/status**: declarative value→colour map, e.g.
   `color: { value: "{{.lastStatus}}", map: { RUNNING: green, STOPPED: red } }` — no expressions.

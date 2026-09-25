@@ -86,6 +86,7 @@ type Panel struct {
 	Key     []string // path into the row; nil = use the rendered label
 	Enter   *Enter   // what Enter opens for the selected row; nil = nothing
 	Parent  string   // set on the panel another panel's Enter opens
+	TabOf   string   // the panel whose slot this one is a tab in
 	Refresh time.Duration
 	Mark    *Mark  // which rows to highlight as current; nil = none
 	Side    string // left | center | right
@@ -151,6 +152,18 @@ type Action struct {
 
 // IsContent reports whether p is a content panel (as opposed to a list panel).
 func (p *Panel) IsContent() bool { return p.Content != nil }
+
+// Tabs lists the panels sharing owner's slot: the owner, then its tabs in
+// declaration order.
+func (d *Definition) Tabs(owner string) []string {
+	tabs := []string{owner}
+	for _, p := range d.Panels {
+		if p.TabOf == owner {
+			tabs = append(tabs, p.ID)
+		}
+	}
+	return tabs
+}
 
 // Panel returns the panel with the given id, or nil.
 func (d *Definition) Panel(id string) *Panel {
@@ -242,6 +255,7 @@ type rawPanel struct {
 	Key      string                `yaml:"key"`
 	Children string                `yaml:"children"` // renamed to enter; kept to explain
 	Enter    yaml.Node             `yaml:"enter"`
+	TabOf    string                `yaml:"tab_of"`
 	Refresh  string                `yaml:"refresh"`
 	Size     string                `yaml:"size"`
 	Side     string                `yaml:"side"`
@@ -546,6 +560,16 @@ func (v *validator) build(raw *rawDef) *Definition {
 			p.Deps = append(p.Deps, p.Parent)
 		}
 	}
+	// Tabs share their owner's slot. Checked after Enter targets are known.
+	rawTabOf := map[string]string{}
+	for _, rp := range raw.Panels {
+		rawTabOf[rp.ID] = rp.TabOf
+	}
+	for i, rp := range raw.Panels {
+		if p := d.Panel(rp.ID); p != nil && rp.TabOf != "" && !p.IsContent() {
+			v.tabOf(d, p, rp, i, rawTabOf)
+		}
+	}
 	// A drill-in child is shown in its parent's slot, so it has no layout of its own.
 	for i, rp := range raw.Panels {
 		if p := d.Panel(rp.ID); p != nil && p.Parent != "" && (rp.Side != "" || rp.Size != "") {
@@ -742,7 +766,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
-		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0,
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "",
 		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
 	} {
 		if set {
@@ -969,5 +993,30 @@ func (v *validator) popup(e *Enter, n *yaml.Node, what string) {
 		}
 	default:
 		bad()
+	}
+}
+
+// tabOf validates `tab_of`: p joins the slot of a top-level list panel.
+func (v *validator) tabOf(d *Definition, p *Panel, rp rawPanel, i int, rawTabOf map[string]string) {
+	line := v.line("panels", i, "tab_of")
+	what := "panel " + p.ID + ": tab_of"
+	owner := d.Panel(rp.TabOf)
+	switch {
+	case owner == nil:
+		v.errorf(line, "%s: unknown panel %q", what, rp.TabOf)
+	case owner == p:
+		v.errorf(line, "%s: a panel cannot be its own tab", what)
+	case rawTabOf[owner.ID] != "":
+		v.errorf(line, "%s: %s is itself a tab of %s", what, owner.ID, rawTabOf[owner.ID])
+	case owner.IsContent():
+		v.errorf(line, "%s: %s is a content panel (content panels have tabs of their own)", what, owner.ID)
+	case owner.Parent != "":
+		v.errorf(line, "%s: %s is opened with Enter from %s; tabs need a top-level panel", what, owner.ID, owner.Parent)
+	case p.Parent != "":
+		v.errorf(line, "%s: a tab cannot be opened with Enter (from %s)", what, p.Parent)
+	case rp.Side != "" || rp.Size != "":
+		v.errorf(v.line("panels", i), "panel %s: side/size not allowed on a tab (it uses %s's slot)", p.ID, owner.ID)
+	default:
+		p.TabOf = owner.ID
 	}
 }

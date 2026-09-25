@@ -16,7 +16,7 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Name != "git-lite" {
 		t.Errorf("Name = %q", d.Name)
 	}
-	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "file", "tags", "tag", "main"}) {
+	if got := ids(d.Panels); !reflect.DeepEqual(got, []string{"status", "branches", "commits", "files", "file", "remotes", "tags", "tag", "main"}) {
 		t.Errorf("panels = %v", got)
 	}
 	commits, files := d.Panel("commits"), d.Panel("files")
@@ -29,10 +29,10 @@ func TestLoadGitExample(t *testing.T) {
 	if !reflect.DeepEqual(files.Deps, []string{"commits"}) {
 		t.Errorf("files deps = %v", files.Deps)
 	}
-	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "file", "tags", "tag", "main"}) {
+	if !reflect.DeepEqual(d.Order, []string{"status", "branches", "commits", "files", "file", "remotes", "tags", "tag", "main"}) {
 		t.Errorf("order = %v", d.Order)
 	}
-	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "tags", "main"}) {
+	if !reflect.DeepEqual(topLevel(d), []string{"status", "branches", "commits", "main"}) {
 		t.Errorf("top level = %v", topLevel(d))
 	}
 	if !reflect.DeepEqual(commits.Key, []string{"fields", "0"}) {
@@ -44,8 +44,8 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Timeout != 30*time.Second {
 		t.Errorf("default timeout = %v", d.Timeout)
 	}
-	if d.Layout.Focus != "equal" || d.Panel("status").Size.Kind != Fit || d.Panel("tags").Side != "right" {
-		t.Errorf("layout = %+v, status size = %+v, tags side = %q", d.Layout, d.Panel("status").Size, d.Panel("tags").Side)
+	if d.Layout.Focus != "equal" || d.Panel("status").Size.Kind != Fit || d.Panel("tags").TabOf != "branches" {
+		t.Errorf("layout = %+v, status size = %+v, tags tab_of = %q", d.Layout, d.Panel("status").Size, d.Panel("tags").TabOf)
 	}
 	acts := d.Panel("branches").Actions
 	if len(acts) != 3 || acts[0].Key != "space" || acts[0].Mode != "background" || acts[1].Prompt == "" || !acts[2].Confirm {
@@ -262,7 +262,7 @@ func ids(ps []*Panel) []string {
 func topLevel(d *Definition) []string {
 	var out []string
 	for _, p := range d.Panels {
-		if p.Parent == "" {
+		if p.Parent == "" && p.TabOf == "" {
 			out = append(out, p.ID)
 		}
 	}
@@ -521,5 +521,56 @@ panels:
 	}
 	if !slices.Contains(d.Panel("c").Deps, "b") {
 		t.Errorf("target should depend on its parent: %v", d.Panel("c").Deps)
+	}
+}
+
+func TestTabOf(t *testing.T) {
+	src := `
+panels:
+  - {id: branches, source: git branch}
+  - {id: other, source: y}
+  - id: remotes
+    tab_of: branches
+    source: git branch -r
+    enter: rcommits
+    mark: .current
+    actions: [{key: F, desc: Fetch, cmd: "git fetch {{.line}}"}]
+  - {id: rcommits, source: "git log {{remotes.line}}"}
+  - {id: tags, tab_of: branches, source: git tag}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Tabs("branches"); !reflect.DeepEqual(got, []string{"branches", "remotes", "tags"}) {
+		t.Errorf("tabs = %v", got)
+	}
+	if got := d.Tabs("other"); !reflect.DeepEqual(got, []string{"other"}) {
+		t.Errorf("untabbed slot = %v", got)
+	}
+	r := d.Panel("remotes")
+	if r.TabOf != "branches" || r.Enter == nil || r.Mark == nil || len(r.Actions) != 1 {
+		t.Errorf("member lost its fields: %+v", r)
+	}
+}
+
+func TestTabOfErrors(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{"unknown", "panels:\n  - id: a\n    source: x\n    tab_of: z", "t.yaml:4: panel a: tab_of: unknown panel \"z\""},
+		{"self", "panels:\n  - {id: a, source: x, tab_of: a}", "tab_of: a panel cannot be its own tab"},
+		{"chain", "panels:\n  - {id: a, source: x}\n  - {id: b, source: x, tab_of: a}\n  - {id: c, source: x, tab_of: b}", "panel c: tab_of: b is itself a tab of a"},
+		{"content owner", "panels:\n  - {id: m, content: {default: {tabs: [{name: n, cmd: c}]}}}\n  - {id: b, source: x, tab_of: m}", "panel b: tab_of: m is a content panel"},
+		{"content member", "panels:\n  - {id: a, source: x}\n  - {id: m, tab_of: a, content: {default: {tabs: [{name: n, cmd: c}]}}}", "panel m: tab_of only applies to list panels"},
+		{"owner is enter target", "panels:\n  - {id: a, source: x, enter: b}\n  - {id: b, source: x}\n  - {id: c, source: x, tab_of: b}", "panel c: tab_of: b is opened with Enter from a"},
+		{"member is enter target", "panels:\n  - {id: a, source: x, enter: c}\n  - {id: b, source: x}\n  - {id: c, source: x, tab_of: b}", "panel c: tab_of: a tab cannot be opened with Enter"},
+		{"member side", "panels:\n  - {id: a, source: x}\n  - {id: b, source: x, tab_of: a, side: right}", "panel b: side/size not allowed on a tab (it uses a's slot)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src), "t.yaml")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error %v\ndoes not contain %q", err, tt.want)
+			}
+		})
 	}
 }

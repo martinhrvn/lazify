@@ -36,12 +36,23 @@ func (e *Engine) Focused() string {
 	return e.Top(e.slot())
 }
 
-// Top returns the panel shown in slot: its deepest entered level.
+// FocusedSlot is the top-level slot that has focus (under any popup).
+func (e *Engine) FocusedSlot() string { return e.slot() }
+
+// Tabs lists the panels sharing slot (the slot's own panel first).
+func (e *Engine) Tabs(slot string) []string { return e.def.Tabs(slot) }
+
+// ActiveTab returns the panel tab shown in slot.
+func (e *Engine) ActiveTab(slot string) string { return e.Tabs(slot)[e.slotTab[slot]] }
+
+// Top returns the panel shown in slot: the deepest entered level of its
+// active tab. Drill-down stacks belong to tabs, so they survive tab switches.
 func (e *Engine) Top(slot string) string {
-	if st := e.stacks[slot]; len(st) > 0 {
+	tab := e.ActiveTab(slot)
+	if st := e.stacks[tab]; len(st) > 0 {
 		return st[len(st)-1]
 	}
-	return slot
+	return tab
 }
 
 // isOpen reports whether an Enter target is currently shown.
@@ -68,7 +79,7 @@ func (e *Engine) EnterTarget() (string, bool) {
 
 // CanGoBack reports whether Esc has a level or popup to close.
 func (e *Engine) CanGoBack() bool {
-	return len(e.popups) > 0 || len(e.stacks[e.slot()]) > 0
+	return len(e.popups) > 0 || len(e.stacks[e.ActiveTab(e.slot())]) > 0
 }
 
 // Enter opens the focused panel's Enter target for its selected row: in the
@@ -90,7 +101,8 @@ func (e *Engine) Enter() Effects {
 		top := e.popups[len(e.popups)-1]
 		e.popups = append(e.popups, popupLevel{id: target, width: top.width, height: top.height, full: top.full})
 	default:
-		e.stacks[e.slot()] = append(e.stacks[e.slot()], target)
+		tab := e.ActiveTab(e.slot())
+		e.stacks[tab] = append(e.stacks[tab], target)
 	}
 
 	ps := e.panels[target]
@@ -109,8 +121,9 @@ func (e *Engine) Back() (Effects, bool) {
 	var closed string
 	if n := len(e.popups); n > 0 {
 		closed, e.popups = e.popups[n-1].id, e.popups[:n-1]
-	} else if st := e.stacks[e.slot()]; len(st) > 0 {
-		closed, e.stacks[e.slot()] = st[len(st)-1], st[:len(st)-1]
+	} else if tab := e.ActiveTab(e.slot()); len(e.stacks[tab]) > 0 {
+		st := e.stacks[tab]
+		closed, e.stacks[tab] = st[len(st)-1], st[:len(st)-1]
 	} else {
 		return e.take(), false
 	}
@@ -133,7 +146,8 @@ func (e *Engine) Back() (Effects, bool) {
 // Crumbs is the path shown as slot's title: each level's title, separated by
 // the label of the row it was entered from.
 func (e *Engine) Crumbs(slot string) []string {
-	return e.crumbs(append([]string{slot}, e.stacks[slot]...))
+	tab := e.ActiveTab(slot)
+	return e.crumbs(append([]string{tab}, e.stacks[tab]...))
 }
 
 func (e *Engine) crumbs(path []string) []string {

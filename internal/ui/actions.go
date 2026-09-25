@@ -166,7 +166,7 @@ func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // navHints are the built-in keys, for the hint bar and help.
 var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
-	{"[/]", "switch tab"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
+	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
 	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"?", "help"}, {"q", "quit"},
 }
 
@@ -205,6 +205,9 @@ func (m Model) statusLine() string {
 	}
 	if m.eng.CanGoBack() {
 		add("esc", "back")
+	}
+	if _, popup := m.eng.Popup(); !popup && len(m.eng.Tabs(m.eng.FocusedSlot())) > 1 {
+		add("[/]", "tabs")
 	}
 	for _, b := range m.eng.Bindings() {
 		if !b.Overridden && !add(b.Key, b.Desc) {

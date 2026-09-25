@@ -32,10 +32,14 @@ panels:
         tabs:
           - name: File
             cmd: git show {{commits.fields.0}}:{{files.line}}
+  - id: remotes
+    title: Remotes
+    tab_of: branches                                   # a tab in the Branches slot: [ ] switch
+    source: git branch -r --format='%(refname:short)'
   - id: tags
     title: Tags
+    tab_of: branches
     source: git tag --sort=-creatordate
-    side: right                                        # right of the main view
     enter: {panel: tag, popup: {width: 70, height: 80}}
   - id: tag
     title: Tag

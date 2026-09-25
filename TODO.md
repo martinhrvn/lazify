@@ -63,5 +63,11 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `children:` gives a migration error
 - [ ] later: remember the cursor per entered row; action output in a popup (`o`)
 
-## M5 — context, columns, auto-refresh, filter
+## Panel tabs ✅
+- [x] `tab_of: <panel>` puts list panels in one slot; the slot title is a tab bar
+- [x] `[`/`]` switch the focused slot's panel tabs (focus + active follow), else content tabs
+- [x] drill-down stacks per tab; the active tab is remembered per slot
+- [ ] later: load hidden tabs lazily (all tabs run today)
+
+## M5 — context, auto-refresh, filter (columns ✅ already)
 ## M6 — example definitions (git-lite, cloudwatch, ecs)

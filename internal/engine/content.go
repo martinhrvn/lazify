@@ -124,13 +124,24 @@ func (e *Engine) entry(view string) (string, []*def.Tab) {
 
 func tabKey(view, entry string) string { return view + "\x00" + entry }
 
-// NextTab shows the target content panel's next tab.
+// NextTab shows the next tab: of the focused slot if it has panel tabs,
+// otherwise of the target content panel.
 func (e *Engine) NextTab() Effects { return e.shiftTab(1) }
 
-// PrevTab shows the target content panel's previous tab.
+// PrevTab shows the previous tab (see NextTab).
 func (e *Engine) PrevTab() Effects { return e.shiftTab(-1) }
 
 func (e *Engine) shiftTab(delta int) Effects {
+	// Panel tabs of the focused slot come first; otherwise content tabs.
+	if slot := e.slot(); len(e.popups) == 0 && len(e.Tabs(slot)) > 1 {
+		n := len(e.Tabs(slot))
+		e.slotTab[slot] = ((e.slotTab[slot]+delta)%n + n) % n
+		if f := e.Focused(); !e.IsContent(f) {
+			e.active = f
+		}
+		e.evaluateContent(true)
+		return e.take()
+	}
 	view := e.Target()
 	if view == "" {
 		return e.take()

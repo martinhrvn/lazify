@@ -38,6 +38,9 @@ func (m Model) panelBox(id string, crumbs []string, w, h int) (string, []string)
 		title, lines = m.contentBox(id, h)
 	} else {
 		title, lines = m.eng.View(id).Title, m.panelLines(id, w-2, h)
+		if len(crumbs) > 0 {
+			title = crumbs[len(crumbs)-1] // the slot's tab bar when not drilled in
+		}
 	}
 	if len(crumbs) > 1 {
 		title = strings.Join(crumbs[:len(crumbs)-1], " › ") + " › " + title
@@ -54,4 +57,16 @@ func (m Model) popupBox(pv engine.PopupView, bodyH int) string {
 	}
 	title, lines := m.panelBox(pv.ID, pv.Crumbs, w, h-2)
 	return box(title, lines, w, h-2, true)
+}
+
+// tabBar renders a slot's panel tabs, the shown one highlighted.
+func (m Model) tabBar(tabs []string, active string) string {
+	parts := make([]string, len(tabs))
+	for i, id := range tabs {
+		parts[i] = m.def.Panel(id).Title
+		if id == active {
+			parts[i] = styleTabActive.Render(parts[i])
+		}
+	}
+	return strings.Join(parts, " │ ")
 }

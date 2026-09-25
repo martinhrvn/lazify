@@ -91,6 +91,7 @@ type Engine struct {
 	focus    int                        // index into TopLevel(): the focused slot
 	stacks   map[string][]string        // per slot: panels entered with Enter (drill down)
 	popups   []popupLevel               // open popups, innermost last
+	slotTab  map[string]int             // active panel tab per slot (index into def.Tabs)
 	nextID   uint64
 	settleID uint64
 	fx       Effects // accumulated by the current call
@@ -99,15 +100,16 @@ type Engine struct {
 // New creates an engine. ctx overrides context defaults (e.g. from --set).
 func New(d *def.Definition, ctx map[string]string) *Engine {
 	e := &Engine{
-		def:    d,
-		ctx:    map[string]string{},
-		panels: map[string]*panelState{},
-		cache:  map[string][]rows.Row{},
-		tabIdx: map[string]int{},
-		dcache: map[string][]string{},
-		mcache: map[string]map[string]bool{},
-		views:  map[string]*viewState{},
-		stacks: map[string][]string{},
+		def:     d,
+		ctx:     map[string]string{},
+		panels:  map[string]*panelState{},
+		cache:   map[string][]rows.Row{},
+		tabIdx:  map[string]int{},
+		dcache:  map[string][]string{},
+		mcache:  map[string]map[string]bool{},
+		views:   map[string]*viewState{},
+		stacks:  map[string][]string{},
+		slotTab: map[string]int{},
 	}
 	for name, cv := range d.Context {
 		e.ctx[name] = cv.Default
@@ -392,7 +394,7 @@ func (e *Engine) TopLevel() []string {
 	var left, center, right []string
 	for _, p := range e.def.Panels {
 		switch {
-		case p.Parent != "":
+		case p.Parent != "", p.TabOf != "":
 		case p.Side == "right":
 			right = append(right, p.ID)
 		case p.Side == "center":
@@ -410,8 +412,13 @@ func (e *Engine) FocusNext() Effects { return e.setFocus(e.focus + 1) }
 // FocusPrev focuses the previous top-level panel, wrapping around.
 func (e *Engine) FocusPrev() Effects { return e.setFocus(e.focus - 1) }
 
-// FocusPanel focuses a top-level panel by id.
+// FocusPanel focuses a panel by id: a top-level panel, or a tab (which is
+// then shown in its slot).
 func (e *Engine) FocusPanel(id string) Effects {
+	if p := e.def.Panel(id); p != nil && p.TabOf != "" {
+		e.slotTab[p.TabOf] = slices.Index(e.def.Tabs(p.TabOf), id)
+		id = p.TabOf
+	}
 	if i := slices.Index(e.TopLevel(), id); i >= 0 {
 		return e.setFocus(i)
 	}
