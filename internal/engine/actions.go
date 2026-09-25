@@ -82,7 +82,7 @@ func (e *Engine) RenderAction(ref ActionRef, input string) (runner.Request, erro
 	if err != nil {
 		return runner.Request{}, err
 	}
-	req := runner.Request{Cmd: cmd, Env: e.env, Timeout: e.def.Timeout}
+	req := runner.Request{Cmd: cmd, Env: e.envFor(), Timeout: e.def.Timeout}
 	if ref.Action.Mode == "interactive" {
 		req.Timeout = 0
 	}

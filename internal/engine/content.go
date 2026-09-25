@@ -181,6 +181,7 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 	if slices.ContainsFunc(t.Cmd.Refs(), func(r tmpl.Ref) bool { return r.Scope == tmpl.ScopeRow }) {
 		needs = append(needs, e.active)
 	}
+	needs = append(needs, e.def.EnvDeps...) // every command runs with the env
 	for _, dep := range append(needs, t.Deps...) {
 		dp := e.panels[dep]
 		if dp.runID != 0 || dp.pending {
@@ -202,21 +203,22 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 		v.pending, v.err = false, err.Error()
 		return
 	}
+	k := e.key(cmd) // results are per env + command
 	v.empty = ""
 	stream := t.Mode == "stream"
 	if !v.force {
 		switch {
-		case v.runID != 0 && v.runCmd == cmd:
+		case v.runID != 0 && v.runCmd == k:
 			return // already running it
-		case v.cmd == cmd:
+		case v.cmd == k:
 			e.cancelView(v)
 			v.pending, v.stale = false, false
 			return
 		}
 	}
 	e.cancelView(v)
-	if cached, ok := e.dcache[cmd]; ok && !stream && !v.force {
-		v.cmd, v.lines, v.err, v.pending, v.stale = cmd, cached, "", false, false
+	if cached, ok := e.dcache[k]; ok && !stream && !v.force {
+		v.cmd, v.lines, v.err, v.pending, v.stale = k, cached, "", false, false
 		return
 	}
 	if !run {
@@ -226,18 +228,18 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 	}
 
 	e.nextID++
-	v.runID, v.runCmd, v.stream, v.json = e.nextID, cmd, stream, t.Format == "json"
+	v.runID, v.runCmd, v.stream, v.json = e.nextID, k, stream, t.Format == "json"
 	v.pending, v.force, v.ended, v.err = false, false, false, ""
 	timeout := e.def.Timeout
 	if stream {
-		v.cmd, v.lines, v.partial, v.stale = cmd, nil, "", false
+		v.cmd, v.lines, v.partial, v.stale = k, nil, "", false
 		timeout = 0
 	} else {
 		v.stale = len(v.lines) > 0
 	}
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID: v.runID, Panel: id, Stream: stream,
-		Req: runner.Request{Cmd: cmd, Env: e.env, Timeout: timeout},
+		Req: runner.Request{Cmd: cmd, Env: e.envFor(), Timeout: timeout},
 	})
 }
 

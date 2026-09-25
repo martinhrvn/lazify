@@ -1,12 +1,19 @@
 name: lazyecs
-context:
-  profile: { source: aws configure list-profiles, default: default }
-  region:  { values: [eu-west-1, eu-central-1, us-east-1], default: eu-west-1 }
-env:
-  AWS_PROFILE: "{{ctx.profile}}"
-  AWS_REGION:  "{{ctx.region}}"
+env:                                     # every command runs with these; they follow the selects
+  AWS_PROFILE: "{{profile.line}}"
+  AWS_REGION:  "{{region.line}}"
 
 panels:
+  - id: profile                          # a select panel: press its number to pick
+    title: Profile
+    select: true
+    source: aws configure list-profiles
+    default: default
+  - id: region
+    title: Region
+    select: true
+    values: [eu-west-1, eu-central-1, us-east-1]
+
   - id: clusters
     title: Clusters
     source: >

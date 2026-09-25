@@ -9,7 +9,6 @@
 package engine
 
 import (
-	"maps"
 	"slices"
 	"time"
 
@@ -65,6 +64,7 @@ type panelState struct {
 	stale   bool
 	err     string
 	blocked string
+	pick    int // a select's cursor in its open picker
 
 	marks      map[string]bool // output lines of the mark command
 	markErr    string
@@ -77,8 +77,7 @@ type panelState struct {
 // Engine holds the app state for one definition.
 type Engine struct {
 	def    *def.Definition
-	ctx    map[string]string
-	env    map[string]string
+	set    map[string]string // initial select choices (--set)
 	panels map[string]*panelState
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
@@ -97,11 +96,11 @@ type Engine struct {
 	fx       Effects // accumulated by the current call
 }
 
-// New creates an engine. ctx overrides context defaults (e.g. from --set).
-func New(d *def.Definition, ctx map[string]string) *Engine {
+// New creates an engine. set holds initial choices for select panels (--set).
+func New(d *def.Definition, set map[string]string) *Engine {
 	e := &Engine{
 		def:     d,
-		ctx:     map[string]string{},
+		set:     set,
 		panels:  map[string]*panelState{},
 		cache:   map[string][]rows.Row{},
 		tabIdx:  map[string]int{},
@@ -111,23 +110,16 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 		stacks:  map[string][]string{},
 		slotTab: map[string]int{},
 	}
-	for name, cv := range d.Context {
-		e.ctx[name] = cv.Default
-	}
-	maps.Copy(e.ctx, ctx)
-	e.env = map[string]string{}
-	for k, t := range d.Env {
-		e.env[k], _ = t.Render(e.resolver(nil), tmpl.Display)
-	}
 	for _, p := range d.Panels {
 		e.panels[p.ID] = &panelState{def: p}
 		if p.IsContent() {
 			e.views[p.ID] = &viewState{}
 		}
 	}
-	for _, id := range e.TopLevel() {
-		if !e.IsContent(id) {
-			e.active = id
+	// Start on the first list panel that isn't a select.
+	for i, id := range e.TopLevel() {
+		if !e.IsContent(id) && !e.IsSelect(id) {
+			e.focus, e.active = i, id
 			break
 		}
 	}
@@ -183,7 +175,7 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 	} else {
 		e.cache[cmd] = parsed
 		e.setRows(ps, cmd, parsed)
-		e.jumpToMark(ps)
+		e.initialChoice(ps)
 	}
 	e.propagate(ps.def.ID, true)
 	e.evaluateContent(true)
@@ -206,6 +198,13 @@ func (e *Engine) Settle(id uint64) Effects {
 // Dependents are served from the cache at once; misses wait for Settle.
 func (e *Engine) Move(delta int) Effects {
 	ps := e.panels[e.Focused()]
+	if e.PickerOpen() {
+		ps.pick = max(0, min(len(ps.rows)-1, ps.pick+delta)) // nothing changes until enter
+		return e.take()
+	}
+	if ps.def.Select {
+		return e.take() // a select changes through its picker
+	}
 	if ps.def.IsContent() || len(ps.rows) == 0 {
 		return e.take() // content panels scroll in the UI
 	}
@@ -268,6 +267,13 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 	if ps.def.IsContent() || (ps.def.Parent != "" && !e.isOpen(ps.def.ID)) {
 		return // content panels have no source; Enter targets run only while open
 	}
+	if ps.def.Values != nil {
+		if ps.cmd == "" { // written in the definition: no command, no inputs
+			e.setRows(ps, "values", valueRows(ps))
+			e.initialChoice(ps)
+		}
+		return
+	}
 	for _, dep := range ps.def.Deps {
 		d := e.panels[dep]
 		if d.runID != 0 || d.pending {
@@ -301,7 +307,7 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 		ps.pending = false
 		e.setRows(ps, cmd, cached)
 		e.cachedMark(ps)
-		e.jumpToMark(ps)
+		e.initialChoice(ps)
 		return
 	}
 	if !run {
@@ -312,28 +318,32 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 	e.start(ps, cmd)
 }
 
-// render renders a panel's source; a failure is recorded as the panel's error.
+// render renders a panel's source and returns its key (env + command); a
+// failure is recorded as the panel's error.
 func (e *Engine) render(ps *panelState) (string, bool) {
+	if ps.def.Source == nil {
+		return "", false // a values panel
+	}
 	cmd, err := ps.def.Source.Render(e.resolver(nil), tmpl.Shell)
 	if err != nil {
 		e.cancel(ps)
 		ps.pending, ps.err = false, err.Error()
 		return "", false
 	}
-	return cmd, true
+	return e.key(cmd), true
 }
 
-// start begins running cmd for ps, replacing any in-flight run.
-func (e *Engine) start(ps *panelState, cmd string) {
+// start begins running the command keyed k for ps, replacing any in-flight run.
+func (e *Engine) start(ps *panelState, k string) {
 	e.cancel(ps)
 	e.startMark(ps)
 	e.nextID++
-	ps.runID, ps.runCmd, ps.pending = e.nextID, cmd, false
+	ps.runID, ps.runCmd, ps.pending = e.nextID, k, false
 	ps.stale = len(ps.rows) > 0
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID:    ps.runID,
 		Panel: ps.def.ID,
-		Req:   runner.Request{Cmd: cmd, Env: e.env, Timeout: e.def.Timeout},
+		Req:   runner.Request{Cmd: cmdOf(k), Env: e.envFor(), Timeout: e.def.Timeout},
 	})
 }
 
@@ -433,8 +443,8 @@ func (e *Engine) setFocus(i int) Effects {
 	}
 	n := len(e.TopLevel())
 	e.focus = ((i % n) + n) % n
-	if id := e.Focused(); !e.IsContent(id) {
-		e.active = id
+	if id := e.Focused(); !e.IsContent(id) && !e.IsSelect(id) {
+		e.active = id // selects are chosen in a picker; they never drive content
 	}
 	e.evaluateContent(true)
 	return e.take()
@@ -474,10 +484,26 @@ func (e *Engine) View(id string) PanelView {
 		}
 		v.MarkErr = ps.markErr
 	}
+	if ps.def.Select && len(ps.rows) > 0 {
+		if n := len(e.popups); n > 0 && e.popups[n-1].picker && e.popups[n-1].id == id {
+			v.Cursor = ps.pick // the picker lists every choice
+		} else {
+			v.Lines, v.Columns, v.Marked = only(v.Lines, v.Cursor), only(v.Columns, v.Cursor), only(v.Marked, v.Cursor)
+			v.Cursor = 0 // otherwise a select shows just its choice
+		}
+	}
 	return v
 }
 
-// resolver resolves refs against row (for `.x`), panel selections and ctx.
+// only keeps element i of s (nil stays nil).
+func only[T any](s []T, i int) []T {
+	if i < 0 || i >= len(s) {
+		return nil
+	}
+	return s[i : i+1]
+}
+
+// resolver resolves refs against row (for `.x`) and panel selections.
 func (e *Engine) resolver(row rows.Row) tmpl.Resolver {
 	return resolverFunc(func(ref tmpl.Ref) (any, bool) {
 		var root any
@@ -487,10 +513,7 @@ func (e *Engine) resolver(row rows.Row) tmpl.Resolver {
 				return nil, false
 			}
 			root = row
-		case tmpl.ScopeCtx:
-			v, ok := e.ctx[ref.Path[0]]
-			return v, ok
-		case tmpl.ScopeInput:
+		case tmpl.ScopeCtx, tmpl.ScopeInput:
 			return nil, false
 		default:
 			sel, ok := e.selection(ref.Scope)

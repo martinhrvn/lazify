@@ -204,7 +204,11 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, m.apply(m.eng.Refresh())
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if i := int(k[0] - '1'); i < len(m.eng.TopLevel()) {
-			return m, m.apply(m.eng.FocusPanel(m.eng.TopLevel()[i]))
+			id := m.eng.TopLevel()[i]
+			if m.eng.IsSelect(id) {
+				return m, m.apply(m.eng.Pick(id)) // a select's number opens its picker
+			}
+			return m, m.apply(m.eng.FocusPanel(id))
 		}
 	case "?":
 		m.modal = modalHelp

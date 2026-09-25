@@ -1,0 +1,17 @@
+name: dirs
+# Select panels: context you pick in a picker. Press the Dir panel's number (1)
+# to choose; everything that reads {{dir.line}} follows.
+panels:
+  - id: dir
+    title: Dir
+    select: true                     # one line; its number opens the picker
+    values: [/etc, /tmp, /]            # directories that exist on any Unix
+  - id: files
+    title: Files
+    source: ls -1 {{dir.line}}
+  - id: main
+    content:
+      files:
+        tabs:
+          - name: Head
+            cmd: head -n 40 {{dir.line}}/{{.line}} 2>&1 || ls -la {{dir.line}}/{{.line}}

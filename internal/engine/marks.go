@@ -22,15 +22,16 @@ func (e *Engine) startMark(ps *panelState) {
 		ps.marks, ps.markErr = nil, err.Error()
 		return
 	}
-	if ps.markRunID != 0 && ps.markRunCmd == cmd {
+	k := e.key(cmd)
+	if ps.markRunID != 0 && ps.markRunCmd == k {
 		return
 	}
 	e.cancelMark(ps)
 	e.nextID++
-	ps.markRunID, ps.markRunCmd = e.nextID, cmd
+	ps.markRunID, ps.markRunCmd = e.nextID, k
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID: ps.markRunID, Panel: ps.def.ID, Mark: true,
-		Req: runner.Request{Cmd: cmd, Env: e.env, Timeout: e.def.Timeout},
+		Req: runner.Request{Cmd: cmd, Env: e.envFor(), Timeout: e.def.Timeout},
 	})
 }
 
@@ -52,7 +53,7 @@ func (e *Engine) cachedMark(ps *panelState) {
 	if err != nil {
 		return
 	}
-	if set, ok := e.mcache[cmd]; ok {
+	if set, ok := e.mcache[e.key(cmd)]; ok {
 		e.cancelMark(ps)
 		ps.marks, ps.markErr = set, ""
 		return
@@ -74,9 +75,9 @@ func (e *Engine) markFinished(ps *panelState, stdout []byte, runErr error) {
 			set[l] = true
 		}
 	}
-	e.mcache[cmd] = set
+	e.mcache[cmd] = set // cmd is the run's key (env + command)
 	ps.marks, ps.markErr = set, ""
-	e.jumpToMark(ps)
+	e.initialChoice(ps)
 }
 
 // jumpToMark puts the cursor on the first marked row the first time both rows

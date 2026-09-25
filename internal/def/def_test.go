@@ -64,19 +64,20 @@ func TestLoadECSExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(d.ContextOrder, []string{"profile", "region"}) {
-		t.Errorf("context order = %v", d.ContextOrder)
+	profile, region := d.Panel("profile"), d.Panel("region")
+	if !profile.Select || profile.Default != "default" || profile.Source == nil || profile.Size.Kind != Fit {
+		t.Errorf("profile = %+v", profile)
 	}
-	if d.Context["region"].Default != "eu-west-1" || len(d.Context["region"].Values) != 3 {
-		t.Errorf("region = %+v", d.Context["region"])
+	if !region.Select || len(region.Values) != 3 || region.Source != nil {
+		t.Errorf("region = %+v", region)
 	}
-	if d.Context["profile"].Source == nil {
-		t.Error("profile source not parsed")
+	if !reflect.DeepEqual(d.Panel("clusters").Deps, []string{"profile", "region"}) {
+		t.Errorf("clusters should depend on the env's selects: %v", d.Panel("clusters").Deps)
 	}
 	if d.Panel("services").Refresh != 10*time.Second {
 		t.Errorf("refresh = %v", d.Panel("services").Refresh)
 	}
-	if !reflect.DeepEqual(d.Panel("tasks").Deps, []string{"clusters", "services"}) {
+	if !reflect.DeepEqual(d.Panel("tasks").Deps, []string{"clusters", "services", "profile", "region"}) {
 		t.Errorf("tasks deps = %v", d.Panel("tasks").Deps)
 	}
 	if n := len(d.Panel("services").Columns); n != 3 {
@@ -149,7 +150,7 @@ func TestValidationErrors(t *testing.T) {
 		{"self ref", "panels:\n  - {id: a, source: 'x {{a.y}}'}", "references itself"},
 		{"row ref in source", "panels:\n  - {id: a, source: 'x {{.y}}'}", "{{.y}} in source"},
 		{"input in source", "panels:\n  - {id: a, source: 'x {{input}}'}", "{{input}}"},
-		{"unknown ctx", "panels:\n  - {id: a, source: 'x {{ctx.region}}'}", "unknown context \"region\""},
+		{"ctx ref", "panels:\n  - {id: a, source: 'x {{ctx.region}}'}", "{{ctx.region}}: context was replaced by select panels; use {{region.line}}"},
 		{"cycle", "panels:\n  - {id: a, source: 'x {{b.y}}'}\n  - {id: b, source: 'x {{a.y}}'}", "cycle: a → b → a"},
 		{"bad jq", "panels:\n  - {id: a, source: x, rows: '.['}", "panel a: rows"},
 		{"split with rows", "panels:\n  - {id: a, source: x, rows: '.', split: ','}", "split"},
@@ -196,10 +197,11 @@ func TestValidationErrors(t *testing.T) {
 		{"global no cmd", "actions:\n  - {key: x}\npanels: [{id: a, source: x}]", "t.yaml:2: global action \"x\": cmd is required"},
 		{"global dup key", "actions:\n  - {key: x, cmd: c}\n  - {key: x, cmd: d}\npanels: [{id: a, source: x}]", "t.yaml:3: global action \"x\": duplicate key"},
 		{"global reserved", "actions: [{key: tab, cmd: c}]\npanels: [{id: a, source: x}]", "key \"tab\" is reserved"},
-		{"ctx source and values", "context:\n  r: {source: x, values: [a]}\npanels: [{id: a, source: x}]", "exactly one of source or values"},
-		{"ctx neither", "context:\n  r: {default: a}\npanels: [{id: a, source: x}]", "exactly one of source or values"},
-		{"ctx source refs panel", "context:\n  r: {source: 'x {{a.b}}'}\npanels: [{id: a, source: x}]", "context r"},
-		{"env refs panel", "env:\n  X: '{{a.b}}'\npanels: [{id: a, source: x}]", "env X"},
+		{"old context", "context:\n  r: {values: [a]}\npanels: [{id: a, source: x}]", "t.yaml:1: context: was replaced by select panels"},
+		{"source and values", "panels:\n  - {id: a, source: x, values: [b]}", "panel a: use either source or values, not both"},
+		{"default without select", "panels:\n  - {id: a, values: [b], default: b}", "panel a: default only applies with select: true"},
+		{"select on content", "panels:\n  - {id: a, source: x}\n  - {id: m, select: true, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: select only applies to list panels"},
+		{"env refs unknown panel", "env:\n  X: '{{nope.line}}'\npanels: [{id: a, source: x}]", "env X: unknown panel \"nope\""},
 		{"bad timeout", "timeout: forever\npanels: [{id: a, source: x}]", "timeout"},
 	}
 	for _, tt := range tests {
@@ -226,12 +228,11 @@ func TestReportsAllErrors(t *testing.T) {
 
 func TestValidContentAndActionRefs(t *testing.T) {
 	src := `
-context:
-  region: {values: [a, b], default: a}
 env:
-  R: "{{ctx.region}}"
+  R: "{{region.line}}"
 panels:
-  - {id: a, source: "x {{ctx.region}}", enter: b}
+  - {id: region, select: true, values: [a, b], default: a}
+  - {id: a, source: "x {{region.line}}", enter: b}
   - id: b
     source: "x {{a.y}}"
     actions:
@@ -240,11 +241,11 @@ panels:
   - id: main
     content:
       b:
-        tabs: [{name: n, cmd: "c {{.q}} {{a.y}} {{ctx.region}}"}]
+        tabs: [{name: n, cmd: "c {{.q}} {{a.y}} {{region.line}}"}]
       default:
         tabs: [{name: row, cmd: "echo {{.}}", format: json}]
 actions:
-  - {key: F, desc: Fetch, cmd: "fetch {{ctx.region}} {{.q}}"}
+  - {key: F, desc: Fetch, cmd: "fetch {{region.line}} {{.q}}"}
 `
 	if _, err := Parse([]byte(src), "t.yaml"); err != nil {
 		t.Fatal(err)
@@ -572,5 +573,86 @@ func TestTabOfErrors(t *testing.T) {
 				t.Errorf("error %v\ndoes not contain %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValuesAndSelect(t *testing.T) {
+	src := `
+env:
+  AWS_PROFILE: "{{profile.line}}"
+  DIR: "{{dir.line}}"
+panels:
+  - {id: profile, select: true, source: aws configure list-profiles, default: dev}
+  - {id: dir, select: true, values: [/etc, /tmp], side: right, size: 3}
+  - {id: files, source: "ls {{dir.line}}"}
+  - {id: plain, values: [a, b]}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, dir := d.Panel("profile"), d.Panel("dir")
+	if !p.Select || p.Default != "dev" || p.Size.Kind != Fit || p.Side != "left" {
+		t.Errorf("profile = %+v", p)
+	}
+	if dir.Side != "right" || dir.Size != (Size{Kind: Fixed, N: 3}) {
+		t.Errorf("an explicit side/size wins: %+v %+v", dir.Side, dir.Size)
+	}
+	if !reflect.DeepEqual(dir.Values, []string{"/etc", "/tmp"}) || dir.Source != nil || dir.Parser == nil {
+		t.Errorf("values = %v", dir.Values)
+	}
+	if d.Panel("plain").Select || len(d.Panel("plain").Values) != 2 {
+		t.Error("values also work without select")
+	}
+	// Env references make every other list panel depend on those panels…
+	if got := d.Panel("files").Deps; !reflect.DeepEqual(got, []string{"dir", "profile"}) {
+		t.Errorf("files deps = %v", got)
+	}
+	// …but not the panels the env itself reads (that would be a cycle).
+	if len(p.Deps) != 0 || len(dir.Deps) != 0 {
+		t.Errorf("env panels must not depend on the env: %v %v", p.Deps, dir.Deps)
+	}
+	if !reflect.DeepEqual(d.EnvDeps, []string{"dir", "profile"}) {
+		t.Errorf("env deps = %v", d.EnvDeps)
+	}
+}
+
+func TestEnvUpstreamDoesNotCycle(t *testing.T) {
+	// region's choices depend on the profile; env reads both.
+	src := `
+env:
+  AWS_PROFILE: "{{profile.line}}"
+  AWS_REGION: "{{region.line}}"
+panels:
+  - {id: profile, select: true, values: [a, b]}
+  - {id: region, select: true, source: "regions {{profile.line}}"}
+  - {id: things, source: list}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Panel("region").Deps; !reflect.DeepEqual(got, []string{"profile"}) {
+		t.Errorf("region deps = %v", got)
+	}
+	if got := d.Panel("things").Deps; !reflect.DeepEqual(got, []string{"profile", "region"}) {
+		t.Errorf("things deps = %v", got)
+	}
+}
+
+func TestValuesPanelsGetNoEnvDeps(t *testing.T) {
+	d, err := Parse([]byte("env:\n  P: '{{p.line}}'\npanels:\n  - {id: p, select: true, source: profiles}\n  - {id: r, select: true, values: [a, b]}"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps := d.Panel("r").Deps; len(deps) != 0 {
+		t.Errorf("a values panel runs nothing, so it needs no env deps: %v", deps)
+	}
+}
+
+func TestCIsFreeForActions(t *testing.T) {
+	// c used to be reserved for a context picker; selects replaced it.
+	if _, err := Parse([]byte("panels:\n  - {id: a, source: x, actions: [{key: c, cmd: copy}]}"), "t.yaml"); err != nil {
+		t.Errorf("c should be usable: %v", err)
 	}
 }

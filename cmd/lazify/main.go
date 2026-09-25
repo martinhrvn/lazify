@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -19,7 +20,7 @@ import (
 )
 
 const usage = `usage:
-  lazify <id> [--set ctx=value]...       run the app with that id from %[1]s
+  lazify <id> [--set select=value]...    run the app with that id from %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   lazify list                            list the apps in %[1]s
   lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
@@ -62,11 +63,9 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	for k := range a.set {
-		if _, ok := d.Context[k]; !ok {
-			fmt.Fprintf(stderr, "lazify: --set: unknown context %q\n", k)
-			return 2
-		}
+	if err := checkSet(d, a.set); err != nil {
+		fmt.Fprintln(stderr, "lazify:", err)
+		return 2
 	}
 	p := tea.NewProgram(ui.New(d, runner.Shell{}, a.set), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -224,4 +223,19 @@ func parseArgs(argv []string) (args, error) {
 		a.set[k] = v
 	}
 	return a, nil
+}
+
+// checkSet validates --set: each names a select panel, and for a select with
+// written-out values, one of them (a command's choices are only known later).
+func checkSet(d *def.Definition, set map[string]string) error {
+	for id, val := range set {
+		p := d.Panel(id)
+		switch {
+		case p == nil || !p.Select:
+			return fmt.Errorf("--set %s: no select panel %q", id, id)
+		case p.Values != nil && !slices.Contains(p.Values, val):
+			return fmt.Errorf("--set %s: %q is not one of %s", id, val, strings.Join(p.Values, ", "))
+		}
+	}
+	return nil
 }

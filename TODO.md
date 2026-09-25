@@ -69,5 +69,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] drill-down stacks per tab; the active tab is remembered per slot
 - [ ] later: load hidden tabs lazily (all tabs run today)
 
-## M5 — context, auto-refresh, filter (columns ✅ already)
+## Select panels (context) ✅
+- [x] `select: true` list panels: show their chosen row; number/Enter opens a picker; Enter commits, Esc cancels
+- [x] `values: [..]` rows without a command (any list panel); `default:`, `--set id=value`, mark as default
+- [x] `env` may reference panels; cache keyed by env + command (switching back is instant)
+- [x] `context:` / `{{ctx.x}}` report migration errors; `c` is no longer reserved
+- [ ] later: remember choices between runs; share selects across apps (all AWS apps)
+
+## M5 — auto-refresh, filter (columns ✅, context ✅ as select panels)
 ## M6 — example definitions (git-lite, cloudwatch, ecs)

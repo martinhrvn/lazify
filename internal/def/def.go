@@ -24,21 +24,22 @@ var ReservedKeys = []string{
 	"j", "k", "up", "down", "tab", "shift+tab",
 	"1", "2", "3", "4", "5", "6", "7", "8", "9",
 	"enter", "esc", "[", "]", "ctrl+d", "ctrl+u", "J", "K",
-	"/", "r", "c", "?", "q", "ctrl+c", "o",
+	"/", "r", "?", "q", "ctrl+c", "o",
 }
 
 // Definition is a validated app definition.
 type Definition struct {
-	ID           string // how the app is run: `lazify <id>`
-	Name         string
-	File         string
-	Timeout      time.Duration
-	Context      map[string]*ContextVar
-	ContextOrder []string
-	Env          map[string]*tmpl.Template
-	Panels       []*Panel
-	Actions      []*Action // global: available whatever is focused
-	Layout       Layout
+	ID      string // how the app is run: `lazify <id>`
+	Name    string
+	File    string
+	Timeout time.Duration
+	Env     map[string]*tmpl.Template
+	Panels  []*Panel
+	Actions []*Action // global: available whatever is focused
+	Layout  Layout
+	// EnvDeps are the panels the env reads (sorted); every other list panel
+	// depends on them.
+	EnvDeps []string
 	// Order lists panel ids so that every panel comes after the panels it depends on.
 	Order []string
 }
@@ -65,14 +66,6 @@ type Size struct {
 	N    int
 }
 
-// ContextVar is an app-wide switchable value.
-type ContextVar struct {
-	Name    string
-	Source  *tmpl.Template // one of Source/Values
-	Values  []string
-	Default string
-}
-
 // Panel is a list fed by a shell command.
 type Panel struct {
 	ID      string
@@ -87,6 +80,9 @@ type Panel struct {
 	Enter   *Enter   // what Enter opens for the selected row; nil = nothing
 	Parent  string   // set on the panel another panel's Enter opens
 	TabOf   string   // the panel whose slot this one is a tab in
+	Values  []string // rows written in the definition instead of a source
+	Select  bool     // its selection is chosen in a picker, not by the cursor
+	Default string   // a select's initial choice (key, else label)
 	Refresh time.Duration
 	Mark    *Mark  // which rows to highlight as current; nil = none
 	Side    string // left | center | right
@@ -224,7 +220,7 @@ type rawDef struct {
 	ID      string            `yaml:"id"`
 	Name    string            `yaml:"name"`
 	Timeout string            `yaml:"timeout"`
-	Context map[string]rawCtx `yaml:"context"`
+	Context yaml.Node         `yaml:"context"` // removed; kept to explain the migration
 	Env     map[string]string `yaml:"env"`
 	Panels  []rawPanel        `yaml:"panels"`
 	Detail  yaml.Node         `yaml:"detail"`  // removed; kept to explain the migration
@@ -236,12 +232,6 @@ type rawLayout struct {
 	Focus      string `yaml:"focus"`
 	LeftWidth  int    `yaml:"left_width"`
 	RightWidth int    `yaml:"right_width"`
-}
-
-type rawCtx struct {
-	Source  string   `yaml:"source"`
-	Values  []string `yaml:"values"`
-	Default string   `yaml:"default"`
 }
 
 type rawPanel struct {
@@ -256,6 +246,9 @@ type rawPanel struct {
 	Children string                `yaml:"children"` // renamed to enter; kept to explain
 	Enter    yaml.Node             `yaml:"enter"`
 	TabOf    string                `yaml:"tab_of"`
+	Values   []string              `yaml:"values"`
+	Select   bool                  `yaml:"select"`
+	Default  string                `yaml:"default"`
 	Refresh  string                `yaml:"refresh"`
 	Size     string                `yaml:"size"`
 	Side     string                `yaml:"side"`
@@ -425,9 +418,7 @@ func (v *validator) template(line int, what, src string, d *Definition, r refRul
 				v.errorf(line, "%s: {{input}} is only available in actions with a prompt", what)
 			}
 		case tmpl.ScopeCtx:
-			if _, ok := d.Context[ref.Path[0]]; !ok {
-				v.errorf(line, "%s: unknown context %q", what, ref.Path[0])
-			}
+			v.errorf(line, "%s: {{%s}}: context was replaced by select panels; use {{%s.line}}", what, ref, ref.Path[0])
 		default:
 			switch {
 			case !r.panels:
@@ -451,7 +442,6 @@ func (v *validator) build(raw *rawDef) *Definition {
 		Name:    raw.Name,
 		File:    v.file,
 		Timeout: DefaultTimeout,
-		Context: map[string]*ContextVar{},
 		Env:     map[string]*tmpl.Template{},
 	}
 	if raw.Timeout != "" {
@@ -463,26 +453,8 @@ func (v *validator) build(raw *rawDef) *Definition {
 		}
 	}
 
-	// Context first: everything else may reference it.
-	d.ContextOrder = v.mapKeys("context")
-	for _, name := range d.ContextOrder {
-		d.Context[name] = &ContextVar{Name: name}
-	}
-	for _, name := range d.ContextOrder {
-		rc, cv, line := raw.Context[name], d.Context[name], v.line("context", name)
-		if (rc.Source == "") == (len(rc.Values) == 0) {
-			v.errorf(line, "context %s: needs exactly one of source or values", name)
-		}
-		if rc.Source != "" {
-			cv.Source, _ = v.template(line, "context "+name, rc.Source, d, refRules{})
-		}
-		cv.Values, cv.Default = rc.Values, rc.Default
-		if cv.Default == "" && len(cv.Values) > 0 {
-			cv.Default = cv.Values[0]
-		}
-	}
-	for _, name := range sortedKeys(raw.Env) {
-		d.Env[name], _ = v.template(v.line("env", name), "env "+name, raw.Env[name], d, refRules{})
+	if raw.Context.Kind != 0 {
+		v.errorf(v.line("context"), "context: was replaced by select panels: a panel with select: true and values: or source: (referenced as {{id.line}})")
 	}
 
 	if len(raw.Panels) == 0 {
@@ -518,6 +490,19 @@ func (v *validator) build(raw *rawDef) *Definition {
 		d.Panels = append(d.Panels, p)
 	}
 
+	// Env may reference panels (select panels, in practice), so it is checked
+	// once all ids are known.
+	for _, name := range sortedKeys(raw.Env) {
+		t, deps := v.template(v.line("env", name), "env "+name, raw.Env[name], d, refRules{panels: true})
+		d.Env[name] = t
+		for _, dep := range deps {
+			if !slices.Contains(d.EnvDeps, dep) {
+				d.EnvDeps = append(d.EnvDeps, dep)
+			}
+		}
+	}
+	slices.Sort(d.EnvDeps)
+
 	// Pass 2: everything else.
 	built := map[string]bool{}
 	for i, rp := range raw.Panels {
@@ -546,6 +531,9 @@ func (v *validator) build(raw *rawDef) *Definition {
 			v.errorf(at("side"), "%s: side must be left, center or right, got %q", what, rp.Side)
 		}
 		p.Size = Size{Kind: Flex, N: 1}
+		if rp.Select {
+			p.Size = Size{Kind: Fit} // a select shows one line: its choice
+		}
 		if rp.Size != "" {
 			if s, ok := parseSize(rp.Size); ok {
 				p.Size = s
@@ -576,6 +564,7 @@ func (v *validator) build(raw *rawDef) *Definition {
 			v.errorf(v.line("panels", i), "panel %s: side/size not allowed on a drill-in child (it uses %s's slot)", p.ID, p.Parent)
 		}
 	}
+	v.spreadEnvDeps(d)
 	v.order(d)
 	v.layout(d, raw.Layout)
 
@@ -693,11 +682,21 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	at := func(field string) int { return v.line("panels", i, field) }
 	what := "panel " + p.ID
 
-	if rp.Source == "" {
-		v.errorf(v.line("panels", i), "%s: source is required (or content, for a content panel)", what)
-	} else {
+	switch {
+	case rp.Source != "" && len(rp.Values) > 0:
+		v.errorf(at("values"), "%s: use either source or values, not both", what)
+	case len(rp.Values) > 0:
+		p.Values = rp.Values
+	case rp.Source == "":
+		v.errorf(v.line("panels", i), "%s: source is required (or values, or content for a content panel)", what)
+	default:
 		p.Source, p.Deps = v.template(at("source"), what+": source", rp.Source, d,
 			refRules{panels: true, self: p.ID})
+	}
+
+	p.Select, p.Default = rp.Select, rp.Default
+	if rp.Default != "" && !rp.Select {
+		v.errorf(at("default"), "%s: default only applies with select: true", what)
 	}
 
 	p.Rows, p.Split = rp.Rows, rp.Split
@@ -766,7 +765,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
-		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "",
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select, "default": rp.Default != "", "values": len(rp.Values) > 0,
 		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
 	} {
 		if set {
@@ -1018,5 +1017,37 @@ func (v *validator) tabOf(d *Definition, p *Panel, rp rawPanel, i int, rawTabOf 
 		v.errorf(v.line("panels", i), "panel %s: side/size not allowed on a tab (it uses %s's slot)", p.ID, owner.ID)
 	default:
 		p.TabOf = owner.ID
+	}
+}
+
+// spreadEnvDeps makes every list panel depend on the panels the env reads,
+// since every command runs with the env — except those panels and their own
+// inputs, which would otherwise depend on themselves.
+func (v *validator) spreadEnvDeps(d *Definition) {
+	if len(d.EnvDeps) == 0 {
+		return
+	}
+	upstream := map[string]bool{}
+	queue := slices.Clone(d.EnvDeps)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if upstream[id] {
+			continue
+		}
+		upstream[id] = true
+		if p := d.Panel(id); p != nil {
+			queue = append(queue, p.Deps...)
+		}
+	}
+	for _, p := range d.Panels {
+		if p.IsContent() || p.Values != nil || upstream[p.ID] {
+			continue // values panels run no command
+		}
+		for _, dep := range d.EnvDeps {
+			if !slices.Contains(p.Deps, dep) {
+				p.Deps = append(p.Deps, dep)
+			}
+		}
 	}
 }

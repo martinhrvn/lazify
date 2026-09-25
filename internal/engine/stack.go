@@ -12,13 +12,15 @@ import (
 // popupLevel is one entry of the popup stack.
 type popupLevel struct {
 	id            string
-	width, height int // percent of the screen
+	picker        bool // a select's picker (see Pick)
+	width, height int  // percent of the screen
 	full          bool
 }
 
 // PopupView describes the open popup.
 type PopupView struct {
 	ID            string
+	Picker        bool // a select's picker: sized to its choices
 	Width, Height int
 	Full          bool
 	Crumbs        []string
@@ -86,6 +88,14 @@ func (e *Engine) CanGoBack() bool {
 // same slot (drill down) or in a popup. Inside a popup, a drill target
 // replaces the popup's content.
 func (e *Engine) Enter() Effects {
+	if e.PickerOpen() {
+		e.choose()
+		return e.take()
+	}
+	if f := e.Focused(); e.IsSelect(f) {
+		e.openPicker(f)
+		return e.take()
+	}
 	p := e.def.Panel(e.Focused())
 	if p.Enter == nil || p.IsContent() {
 		return e.take()
@@ -118,6 +128,10 @@ func (e *Engine) Enter() Effects {
 // Back closes the top popup, else the focused slot's deepest level. ok is
 // false when there was nothing to close.
 func (e *Engine) Back() (Effects, bool) {
+	if e.PickerOpen() {
+		e.popups = e.popups[:len(e.popups)-1] // cancel: the choice stays as it was
+		return e.take(), true
+	}
 	var closed string
 	if n := len(e.popups); n > 0 {
 		closed, e.popups = e.popups[n-1].id, e.popups[:n-1]
@@ -184,6 +198,9 @@ func (e *Engine) Popup() (PopupView, bool) {
 	path := []string{e.Top(e.slot())}
 	for _, p := range e.popups {
 		path = append(path, p.id)
+	}
+	if top.picker {
+		return PopupView{ID: top.id, Picker: true, Crumbs: []string{e.def.Panel(top.id).Title}}, true
 	}
 	return PopupView{ID: top.id, Width: top.width, Height: top.height, Full: top.full, Crumbs: e.crumbs(path)[2:]}, true
 }

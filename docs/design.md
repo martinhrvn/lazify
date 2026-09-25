@@ -44,7 +44,7 @@ selected branch.
 | **Content panel** | A panel with `content` instead of `source`: shows **tabs** of command output (diffs, logs, live tails) for the **active** panel. Scrolls instead of selecting. |
 | **Active panel** | The last focused list panel. Content panels show `content[active]`, else `content.default`. Focusing a content panel does not change it. |
 | **Action** | A key that runs a command. **Global** actions (top-level `actions:`) work everywhere; **panel** actions (`panels[].actions`) work while that panel is focused and win over a global with the same key. |
-| **Context** | App-wide switchable values (e.g. AWS profile/region) usable as `{{ctx.name}}`. |
+| **Select panel** | Context (AWS profile/region, k8s context…) is not special: a list panel with `select: true` whose selection is **chosen** in a picker instead of following the cursor. Placed like any panel (one line by default); others read it as `{{region.line}}`, and `env` can too. |
 
 ## 4. Definition format
 
@@ -130,14 +130,21 @@ actions:                                             # global: work whatever is 
 
 ```yaml
 name: lazyecs
-context:
-  profile: { source: aws configure list-profiles, default: default }
-  region:  { values: [eu-west-1, eu-central-1, us-east-1], default: eu-west-1 }
-env:
-  AWS_PROFILE: "{{ctx.profile}}"
-  AWS_REGION:  "{{ctx.region}}"
+env:                                     # every command runs with these; they follow the selects
+  AWS_PROFILE: "{{profile.line}}"
+  AWS_REGION:  "{{region.line}}"
 
 panels:
+  - id: profile                          # a select panel: press its number to pick
+    title: Profile
+    select: true
+    source: aws configure list-profiles
+    default: default
+  - id: region
+    title: Region
+    select: true
+    values: [eu-west-1, eu-central-1, us-east-1]
+
   - id: clusters
     title: Clusters
     source: >
@@ -208,7 +215,10 @@ panels:
 |---|---|---|
 | `id` | yes | Identifier used in references. |
 | `title` | no | Panel title (defaults to id). |
-| `source` | yes | Shell command (`sh -c`). May reference other panels / ctx. |
+| `source` | yes* | Shell command (`sh -c`). May reference other panels. (*or `values`) |
+| `values` | no | Rows written in the definition (`[eu-west-1, us-east-1]`) instead of a `source`; each is `{line: value}`. Runs no command. |
+| `select` | no | `true` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else `default:`, else its `mark`, else the first row. |
+| `default` | no | A select's initial choice, matched against the row's `key`, else its label. |
 | `rows` | no | jq expression producing one JSON value per row. Absent ⇒ one row per non-empty output line: `{line}`. |
 | `split` | no | For line output: separator; adds `fields: [...]`. |
 | `label` | no | Row display template. Default: `.line` or the whole value. |
@@ -232,10 +242,12 @@ to the command), `refresh: [panel ids]` (default: the owning list panel; none fo
 actions. After a successful action all caches are dropped, `refresh` panels re-run (after their
 inputs) and content panels re-run. Keys use Bubble Tea names (`D`, `ctrl+x`, `f5`) or `space`.
 
-**Context**: map of name → `{source | values, default}`. Switched with a picker (`c`).
-Also overridable from CLI: `lazify ecs --set region=us-east-1`.
+**Context** is expressed with select panels (above); the old `context:` block and `{{ctx.x}}`
+report migration errors. `--set region=us-east-1` sets a select's initial choice.
 
-**env**: map applied to every command; values may use `{{ctx.*}}`.
+**env**: map applied to every command (sources, content tabs, marks, actions); values may reference
+panels, typically selects (`AWS_PROFILE: "{{profile.line}}"`). Every other list panel then depends on
+those panels; a variable whose reference has no value yet is left unset.
 
 ## 5. Templates (deliberately tiny)
 
@@ -243,13 +255,12 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
   - `.path` — field of *this* row (the active panel for a content tab; the owning panel for an action/column);
     `.` alone = whole row as JSON.
   - `panelId.path` — field of that panel's current selection.
-  - `ctx.name` — context value.
   - `input` — value from an action's `prompt`.
 - `path` = dotted fields and numeric indexes (`fields.0`, `containers.0.name`). No functions, pipes, conditionals.
 - `\{{` is a literal `{{` — for commands that use Go templates themselves, e.g. `docker ps --format '\{{.Names}}'`.
 - **Every substitution into a command is shell-quoted.** In `label`/`columns` (display) values are inserted raw.
 - A reference to a missing field renders empty in display, and is an **error** in commands (panel shows "missing field X" instead of running a wrong command).
-- Validation at load: every reference must name an existing panel/ctx; parse errors point at file:line.
+- Validation at load: every reference must name an existing panel; parse errors point at file:line.
 
 ## 6. Reactive model
 
@@ -266,7 +277,7 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
      after the debounce (~150 ms, only the latest move counts) pending panels run.
    When B finishes, its selection (cursor restored by `key`, else first row) propagates further.
    Diamonds run once: a panel waits until all of its inputs have settled.
-4. **Cache** by *rendered command string* (env is fixed per session; context changes clear it). Errors are not cached. Revisiting a selection shows cached rows
+4. **Cache** by *rendered env + command* (so another profile/region is another result, and switching back is instant). Errors are not cached. Revisiting a selection shows cached rows
    instantly; `r` or the `refresh` interval re-runs. While re-running, old rows are shown
    **dimmed (stale)** rather than blanked.
 5. **Content panels** follow the same rules, keyed on the active panel's selection (only when
@@ -277,7 +288,8 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
    stdout+stderr, keep the last 10 000 lines, are never cached, and are killed (process group)
    when the selection, tab or focus changes; `r` restarts them. With no entry for the active panel and
    no `default`, a content panel shows "nothing for X".
-6. Context change invalidates the whole cache and re-runs roots.
+6. Choosing in a select propagates like any selection change; since the env is part of the cache
+   key, results for different choices never mix.
 7. Commands have a timeout (default 30 s, configurable); streams have none.
 
 ## 7. Layout & keys
@@ -318,7 +330,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `ctrl-d/u`, `J/K` | scroll content panel |
 | `/` | filter rows in focused panel |
 | `r` | refresh focused panel |
-| `c` | context picker |
+| `1..9` on a select | open its picker (Enter chooses, Esc cancels; focus stays where it was) |
 | `?` | help overlay: focused panel's actions, globals, navigation |
 | `esc` | dismiss an action error (and close prompts/help) |
 | `q` | quit |
@@ -357,7 +369,7 @@ apps:
 - `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.
-- `--set ctx=value`.
+- `--set select=value` — a select panel's initial choice.
 - Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 
 ## 10. Architecture (Go, Bubble Tea — same stack as paleta)
@@ -392,6 +404,6 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 - Display helpers (basename of an ARN, relative time) without becoming a language — a fixed
   small set of formatters, or push it into `rows:` jq (which already can)?
 - Multi-select + bulk actions?
-- Definition composition / shared context across files (all AWS apps share profile/region).
+- Definition composition / shared selects across apps (all AWS apps share profile/region); remembering choices between runs.
 - ~~Name~~: decided — **lazify**.
 - paleta integration: expose `~/.config/lazify/*.yaml` as plt tools.

@@ -78,15 +78,22 @@ func TestUsage(t *testing.T) {
 	}
 }
 
-func TestUnknownContextInSetIsError(t *testing.T) {
+func TestSetChecksSelects(t *testing.T) {
 	cfg := t.TempDir()
-	p := writeDef(t, cfg, "a.yaml", validDef)
-	var errOut bytes.Buffer
-	if code := run([]string{p, "--set", "region=x"}, &bytes.Buffer{}, &errOut, cfg); code != 2 {
-		t.Errorf("code %d", code)
+	p := writeDef(t, cfg, "a.yaml", "panels:\n  - {id: region, select: true, values: [eu, us]}\n  - {id: a, source: x}\n")
+	tests := []struct{ set, want string }{
+		{"nope=x", `--set nope: no select panel "nope"`},
+		{"a=x", `--set a: no select panel "a"`},
+		{"region=mars", `--set region: "mars" is not one of eu, us`},
 	}
-	if !strings.Contains(errOut.String(), `unknown context "region"`) {
-		t.Errorf("stderr = %q", errOut.String())
+	for _, tt := range tests {
+		var errOut bytes.Buffer
+		if code := run([]string{p, "--set", tt.set}, &bytes.Buffer{}, &errOut, cfg); code != 2 {
+			t.Errorf("%s: code %d", tt.set, code)
+		}
+		if !strings.Contains(errOut.String(), tt.want) {
+			t.Errorf("%s: stderr = %q", tt.set, errOut.String())
+		}
 	}
 }
 

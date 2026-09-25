@@ -200,10 +200,17 @@ func (m Model) statusLine() string {
 		used += ansi.StringWidth(h) + 3
 		return true
 	}
+	switch {
+	case m.eng.PickerOpen():
+		add("enter", "choose")
+		add("esc", "cancel")
+	case m.eng.IsSelect(m.eng.Focused()):
+		add("enter", "choose")
+	}
 	if title, ok := m.eng.EnterTarget(); ok {
 		add("enter", title)
 	}
-	if m.eng.CanGoBack() {
+	if m.eng.CanGoBack() && !m.eng.PickerOpen() {
 		add("esc", "back")
 	}
 	if _, popup := m.eng.Popup(); !popup && len(m.eng.Tabs(m.eng.FocusedSlot())) > 1 {

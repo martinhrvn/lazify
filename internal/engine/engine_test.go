@@ -170,9 +170,8 @@ panels:
   - id: plain
     source: x
     rows: .[]
-    label: "{{.name}} ({{ctx.region}})"
-context:
-  region: {values: [eu, us]}
+    label: "{{.name}} ({{region.line}})"
+  - {id: region, select: true, values: [eu, us]}
 `
 	e := New(mustDef(t, src), nil)
 	runs := e.Start().Runs
@@ -188,15 +187,14 @@ context:
 	}
 }
 
-func TestContextAndEnv(t *testing.T) {
+func TestSelectsAndEnv(t *testing.T) {
 	src := `
-context:
-  region: {values: [eu-west-1, us-east-1]}
-  profile: {values: [dev, prod], default: prod}
 env:
-  AWS_REGION: "{{ctx.region}}"
+  AWS_REGION: "{{region.line}}"
 panels:
-  - {id: a, source: "aws --profile {{ctx.profile}}"}
+  - {id: region, select: true, values: [eu-west-1, us-east-1]}
+  - {id: profile, select: true, values: [dev, prod], default: prod}
+  - {id: a, source: "aws --profile {{profile.line}}"}
 `
 	e := New(mustDef(t, src), map[string]string{"region": "us-east-1"})
 	run := e.Start().Runs[0]
