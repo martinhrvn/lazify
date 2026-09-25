@@ -78,12 +78,12 @@ func TestUsage(t *testing.T) {
 	}
 }
 
-func TestSetChecksSelects(t *testing.T) {
+func TestSetChecksPanels(t *testing.T) {
 	cfg := t.TempDir()
-	p := writeDef(t, cfg, "a.yaml", "panels:\n  - {id: region, select: true, values: [eu, us]}\n  - {id: a, source: x}\n")
+	p := writeDef(t, cfg, "a.yaml", "panels:\n  - {id: region, select: true, values: [eu, us]}\n  - {id: a, source: x}\n  - {id: m, content: {default: {tabs: [{name: n, cmd: c}]}}}\n")
 	tests := []struct{ set, want string }{
-		{"nope=x", `--set nope: no select panel "nope"`},
-		{"a=x", `--set a: no select panel "a"`},
+		{"nope=x", `--set nope: no list panel "nope"`},
+		{"m=x", `--set m: no list panel "m"`},
 		{"region=mars", `--set region: "mars" is not one of eu, us`},
 	}
 	for _, tt := range tests {

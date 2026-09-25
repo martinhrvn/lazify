@@ -134,14 +134,14 @@ func valueRows(ps *panelState) []rows.Row {
 }
 
 // initialChoice picks the row a panel starts on, once rows are known and the
-// user hasn't moved: --set, else a select's default (matched against the
+// user hasn't moved: --set, else the panel's default (matched against the
 // row's key or label), else its mark.
 func (e *Engine) initialChoice(ps *panelState) {
 	if ps.jumped || ps.moved || len(ps.rows) == 0 {
 		return
 	}
 	want, ok := e.set[ps.def.ID]
-	if !ok && ps.def.IsSelect() {
+	if !ok {
 		want = ps.def.Default
 	}
 	if want == "" {

@@ -113,6 +113,7 @@ type Mark struct {
 // place of this one (drill down) or in a popup of Width×Height percent.
 type Enter struct {
 	Panel         string
+	Focus         string // instead of opening a panel: move focus to this panel, or "next"
 	Popup         bool
 	Full          bool
 	Width, Height int
@@ -561,6 +562,21 @@ func (v *validator) build(raw *rawDef) *Definition {
 			p.Deps = append(p.Deps, p.Parent)
 		}
 	}
+	// enter: {focus: …} targets must be panels you can focus. Checked after Enter
+	// targets are known.
+	for i, rp := range raw.Panels {
+		p := d.Panel(rp.ID)
+		if p == nil || p.Enter == nil || p.Enter.Focus == "" || p.Enter.Focus == "next" {
+			continue
+		}
+		line, what := v.line("panels", i, "enter"), "panel "+p.ID+": enter: focus"
+		switch t := d.Panel(p.Enter.Focus); {
+		case t == nil:
+			v.errorf(line, "%s: unknown panel %q", what, p.Enter.Focus)
+		case t.Parent != "":
+			v.errorf(line, "%s: %s is only shown through Enter from %s, so it can't be focused directly", what, t.ID, t.Parent)
+		}
+	}
 	// Tabs share their owner's slot. Checked after Enter targets are known.
 	rawTabOf := map[string]string{}
 	for _, rp := range raw.Panels {
@@ -718,9 +734,6 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 		p.Select = "inline"
 	default:
 		v.errorf(at("select"), "%s: select must be true, popup or inline, got %q", what, mode)
-	}
-	if rp.Default != "" && !p.IsSelect() {
-		v.errorf(at("default"), "%s: default only applies with select: true", what)
 	}
 
 	p.Rows, p.Split = rp.Rows, rp.Split
@@ -976,10 +989,12 @@ func (v *validator) enter(d *Definition, p *Panel, n yaml.Node, line int) *Enter
 			switch k.Value {
 			case "panel":
 				e.Panel = val.Value
+			case "focus":
+				e.Focus = val.Value
 			case "popup":
 				v.popup(e, val, what)
 			default:
-				v.errorf(k.Line, "%s: unknown field %q (use panel and popup)", what, k.Value)
+				v.errorf(k.Line, "%s: unknown field %q (use panel and popup, or focus)", what, k.Value)
 			}
 		}
 	default:
@@ -987,6 +1002,13 @@ func (v *validator) enter(d *Definition, p *Panel, n yaml.Node, line int) *Enter
 		return nil
 	}
 
+	if e.Focus != "" {
+		if e.Panel != "" || e.Popup {
+			v.errorf(line, "%s: use either focus or panel/popup, not both", what)
+			return nil
+		}
+		return e // the focus target is checked once all panels are known
+	}
 	target := d.Panel(e.Panel)
 	switch {
 	case e.Panel == "":

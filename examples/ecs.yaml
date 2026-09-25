@@ -69,6 +69,7 @@ panels:
     rows: .clusters[]
     key: .clusterArn
     label: "{{.clusterName}}"
+    enter: {focus: services}           # Enter: on to the cluster's services
 
   - id: services
     title: Services
@@ -78,6 +79,7 @@ panels:
     # health is computed here (jq), then styled below: styles are lookups, not logic
     rows: '.services[] | . + {health: (if .runningCount < .desiredCount then "degraded" else "ok" end)}'
     key: .serviceArn
+    enter: {focus: tasks}
     columns:
       - { title: Service, value: "{{.serviceName}}" }
       - title: Tasks

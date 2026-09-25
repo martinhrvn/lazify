@@ -203,6 +203,7 @@ panels:
     rows: .clusters[]
     key: .clusterArn
     label: "{{.clusterName}}"
+    enter: {focus: services}           # Enter: on to the cluster's services
 
   - id: services
     title: Services
@@ -212,6 +213,7 @@ panels:
     # health is computed here (jq), then styled below: styles are lookups, not logic
     rows: '.services[] | . + {health: (if .runningCount < .desiredCount then "degraded" else "ok" end)}'
     key: .serviceArn
+    enter: {focus: tasks}
     columns:
       - { title: Service, value: "{{.serviceName}}" }
       - title: Tasks
@@ -264,7 +266,7 @@ panels:
 | `source` | yes* | Shell command (`sh -c`). May reference other panels. (*or `values`) |
 | `values` | no | Rows written in the definition (`[eu-west-1, us-east-1]`) instead of a `source`; each is `{line: value}`. Runs no command. |
 | `select` | no | `popup` (or `true`) or `inline` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker — a dialog (`popup`) or the box itself expanding into the list (`inline`), never both (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else `default:`, else its `mark`, else the first row. |
-| `default` | no | A select's initial choice, matched against the row's `key`, else its label. |
+| `default` | no | The row a list panel starts on (a select's initial choice), matched against the row's `key`, else its label. `--set id=value` overrides it; a `mark` is used when neither is given. |
 | `rows` | no | jq expression producing one JSON value per row. Absent ⇒ one row per non-empty output line: `{line}`. |
 | `split` | no | For line output: separator; adds `fields: [...]`. |
 | `label` | no | Row display template. Default: `.line` or the whole value. |
@@ -274,7 +276,7 @@ panels:
 | `format` | no | Built-in formatter for a column's value (or a panel's label): `ago` (RFC3339 / unix s or ms → `3m ago`), `duration` (`1h 2m`), `bytes` (`1.2 MiB`), `basename`, `bar` (`n/m` → `▰▰▰▱▱ 3/5`). Unparseable values show raw. |
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
 | `tab_of` | no | Makes this list panel a **tab** in another top-level list panel's slot (lazygit's Branches │ Remotes │ Tags). The owner keeps the slot's side, size and number; tabs are ordered owner first, then in declaration order; `[`/`]` switch. Tabs take no `side`/`size`, can't be Enter targets, and all run like any panel (hidden ones too). |
-| `enter` | no | What Enter opens for the selected row: `enter: <panel id>` drills down (the target replaces this panel in its slot), `enter: {panel: <id>, popup: true \| full \| {width, height}}` opens it in a popup (default 80×80 %). A target has one parent, is hidden until entered, takes no `side`/`size`, and may be a content panel. (Replaces the old `children:`.) |
+| `enter` | no | What Enter opens for the selected row: `enter: {focus: <panel>}` or `{focus: next}` moves focus instead (e.g. clusters → services); `enter: <panel id>` drills down (the target replaces this panel in its slot), `enter: {panel: <id>, popup: true \| full \| {width, height}}` opens it in a popup (default 80×80 %). A target has one parent, is hidden until entered, takes no `side`/`size`, and may be a content panel. (Replaces the old `children:`.) |
 | `refresh` | no | Auto re-run interval (e.g. `10s`, minimum `1s`). Only while the panel is on screen (not a hidden tab or covered by a drill-down) and idle; quiet (rows aren't dimmed), the cursor stays on its row by `key`, and dependents re-run only if the selection's command changed. |
 | `mark` | no | Highlights "current" rows with `*` (and starts the cursor on the first one). Either a row path — `mark: .current` marks rows where it is truthy (null, false, 0 and blank strings are not) — or a command — `mark: {source: git branch --show-current, match: "{{.line}}"}` marks rows whose `match` (default: `key`, else label) is one of its output lines. The command runs with the panel (refresh, actions) and is cached like rows; failures just show no marks. |
 | `size` | no | Height in its column: `fit` (content height, capped at a fair share), `<n>` (fixed lines) or `<n>fr` (flex weight). Default `1fr`. Not allowed on drill-in children. |
@@ -425,7 +427,7 @@ apps:
 - `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.
-- `--set select=value` — a select panel's initial choice.
+- `--set panel=row` — the row a list panel starts on (overrides its `default:`).
 - Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 
 ## 10. Architecture (Go, Bubble Tea — same stack as paleta)

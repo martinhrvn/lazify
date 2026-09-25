@@ -20,7 +20,7 @@ import (
 )
 
 const usage = `usage:
-  lazify <id> [--set select=value]...    run the app with that id from %[1]s
+  lazify <id> [--set panel=row]...      run the app with that id from %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   lazify list                            list the apps in %[1]s
   lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
@@ -225,14 +225,15 @@ func parseArgs(argv []string) (args, error) {
 	return a, nil
 }
 
-// checkSet validates --set: each names a select panel, and for a select with
-// written-out values, one of them (a command's choices are only known later).
+// checkSet validates --set: each names a list panel (its initial row), and for
+// a panel with written-out values, one of them (a command's rows are only known
+// later).
 func checkSet(d *def.Definition, set map[string]string) error {
 	for id, val := range set {
 		p := d.Panel(id)
 		switch {
-		case p == nil || !p.IsSelect():
-			return fmt.Errorf("--set %s: no select panel %q", id, id)
+		case p == nil || p.IsContent():
+			return fmt.Errorf("--set %s: no list panel %q", id, id)
 		case p.Values != nil && !slices.Contains(p.Values, val):
 			return fmt.Errorf("--set %s: %q is not one of %s", id, val, strings.Join(p.Values, ", "))
 		}

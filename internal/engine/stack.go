@@ -77,6 +77,12 @@ func (e *Engine) EnterTarget() (string, bool) {
 	if p.Enter == nil || p.IsContent() {
 		return "", false
 	}
+	switch f := p.Enter.Focus; {
+	case f == "next":
+		return "next panel", true
+	case f != "":
+		return e.def.Panel(f).Title, true
+	}
 	return e.def.Panel(p.Enter.Panel).Title, true
 }
 
@@ -100,6 +106,12 @@ func (e *Engine) Enter() Effects {
 	p := e.def.Panel(e.Focused())
 	if p.Enter == nil || p.IsContent() {
 		return e.take()
+	}
+	switch f := p.Enter.Focus; { // enter: {focus: …} moves focus instead of opening
+	case f == "next":
+		return e.FocusNext()
+	case f != "":
+		return e.FocusPanel(f)
 	}
 	if _, ok := e.selection(p.ID); !ok {
 		return e.take()

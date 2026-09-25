@@ -209,7 +209,6 @@ func TestValidationErrors(t *testing.T) {
 		{"old context", "context:\n  r: {values: [a]}\npanels: [{id: a, source: x}]", "t.yaml:1: context: was replaced by select panels"},
 		{"source and values", "panels:\n  - {id: a, source: x, values: [b]}", "panel a: use either source or values, not both"},
 		{"bad select mode", "panels:\n  - id: a\n    values: [b]\n    select: dropdown", "t.yaml:4: panel a: select must be true, popup or inline, got \"dropdown\""},
-		{"default without select", "panels:\n  - {id: a, values: [b], default: b}", "panel a: default only applies with select: true"},
 		{"select on content", "panels:\n  - {id: a, source: x}\n  - {id: m, select: true, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: select only applies to list panels"},
 		{"env refs unknown panel", "env:\n  X: '{{nope.line}}'\npanels: [{id: a, source: x}]", "env X: unknown panel \"nope\""},
 		{"bad timeout", "timeout: forever\npanels: [{id: a, source: x}]", "timeout"},
@@ -698,5 +697,53 @@ func TestBrokenCommandContinuation(t *testing.T) {
 		if _, err := Parse([]byte(ok), "t.yaml"); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
+	}
+}
+
+func TestDefaultOnAnyListPanel(t *testing.T) {
+	d, err := Parse([]byte("panels:\n  - {id: clusters, source: x, key: .line, default: web}"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Panel("clusters").Default != "web" {
+		t.Errorf("default = %q", d.Panel("clusters").Default)
+	}
+}
+
+func TestEnterFocus(t *testing.T) {
+	src := `
+panels:
+  - {id: clusters, source: x, enter: {focus: services}}
+  - {id: services, source: "y {{clusters.line}}", enter: {focus: next}}
+  - {id: tasks, source: z, tab_of: services}
+  - {id: files, source: w, enter: {focus: tasks}}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"clusters": "services", "services": "next", "files": "tasks"} {
+		if e := d.Panel(id).Enter; e == nil || e.Focus != want || e.Panel != "" {
+			t.Errorf("%s enter = %+v", id, e)
+		}
+	}
+	if d.Panel("services").Parent != "" {
+		t.Error("a focus target is not an Enter target: it stays a normal panel")
+	}
+}
+
+func TestEnterFocusErrors(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{"unknown", "panels:\n  - {id: a, source: x, enter: {focus: nope}}", `panel a: enter: focus: unknown panel "nope"`},
+		{"with panel", "panels:\n  - {id: a, source: x, enter: {focus: next, panel: b}}\n  - {id: b, source: y}", "use either focus or panel"},
+		{"enter target", "panels:\n  - {id: a, source: x, enter: b}\n  - {id: b, source: y}\n  - {id: c, source: z, enter: {focus: b}}", "b is only shown through Enter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src), "t.yaml")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v\nwant %q", err, tt.want)
+			}
+		})
 	}
 }
