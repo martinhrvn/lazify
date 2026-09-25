@@ -24,5 +24,23 @@ See `docs/design.md` §11 for milestone scope.
 - [ ] later: bound the cache (LRU) — currently unbounded
 ## M3 — detail view
 ## M4 — actions
-## M5 — drill-in, context, columns, auto-refresh, filter
+## Enter on a row — popup or drill-down
+Each panel can bind Enter to one of two behaviours. Esc always goes back one level.
+- [ ] **drill-down** (lazygit-style): Enter replaces the panel's contents with its `children` panel
+      in the same slot, e.g. branches → commits of that branch → files of that commit.
+      - [ ] stack of levels per slot; the title shows a breadcrumb (`Branches › main › a1b2c3`)
+      - [ ] Esc pops one level and puts the cursor back on the row that was entered
+      - [ ] children run only when opened (the engine already skips them)
+      - [ ] decide: can a panel be both a top-level panel and a drill-down level? (lazygit
+            shows commits both ways)
+- [ ] **popup**: Enter opens an overlay showing a command's output for the row
+      (`popup: {cmd, format, title}`)
+      - [ ] popup layouts to design: `maximized` (full screen), `centered` (a floating box,
+            sized by % or to fit content), maybe `main` (takes over only the main view)
+      - [ ] scrolling, and Esc to close
+      - [ ] decide: once or stream (reuse the detail tab modes from M3?)
+- [ ] definition syntax: e.g. `enter: {drill: files}` vs `enter: {popup: {...}}`, replacing
+      `children:`; validation (only one kind per panel; the drill target must exist)
+
+## M5 — context, columns, auto-refresh, filter
 ## M6 — example definitions (git-lite, cloudwatch, ecs)
