@@ -84,15 +84,23 @@ func (e *Engine) openPicker(id string) {
 // choose commits the picker's choice: the select's selection changes and
 // everything reading it (dependents, content, the env) follows.
 func (e *Engine) choose() {
-	top := e.popups[len(e.popups)-1]
-	e.popups = e.popups[:len(e.popups)-1]
-	ps := e.panels[top.id]
+	ps := e.closePicker()
 	if ps.pick == ps.cursor || ps.pick >= len(ps.rows) {
 		return
 	}
 	ps.cursor, ps.moved = ps.pick, true
 	e.propagate(ps.def.ID, true)
 	e.evaluateContent(true)
+}
+
+// closePicker closes the open picker and clears its filter.
+func (e *Engine) closePicker() *panelState {
+	top := e.popups[len(e.popups)-1]
+	e.popups = e.popups[:len(e.popups)-1]
+	ps := e.panels[top.id]
+	ps.filter = ""
+	e.refilter(ps)
+	return ps
 }
 
 // valueRows are the rows of a panel written with `values:`.
@@ -148,6 +156,6 @@ func (e *Engine) rowLabel(ps *panelState, i int) string {
 // drawing its picker dialog (View keeps showing just the choice).
 func (e *Engine) PickerView(id string) PanelView {
 	v := e.view(id, true)
-	v.Cursor = e.panels[id].pick
+	v.Cursor = e.panels[id].pos(e.panels[id].pick)
 	return v
 }

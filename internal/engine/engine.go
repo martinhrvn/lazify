@@ -51,6 +51,7 @@ type PanelView struct {
 	Blocked string // why the panel cannot run
 	Marked  []bool // per row, when the panel has a mark
 	MarkErr string // why the mark command failed
+	Filter  string // the active filter ("" = none)
 }
 
 type panelState struct {
@@ -64,7 +65,9 @@ type panelState struct {
 	stale   bool
 	err     string
 	blocked string
-	pick    int // a select's cursor in its open picker
+	pick    int    // a select's cursor in its open picker
+	filter  string // see filter.go
+	visible []int  // indexes of rows matching filter; nil = no filter
 
 	marks      map[string]bool // output lines of the mark command
 	markErr    string
@@ -199,7 +202,7 @@ func (e *Engine) Settle(id uint64) Effects {
 func (e *Engine) Move(delta int) Effects {
 	ps := e.panels[e.Focused()]
 	if e.PickerOpen() {
-		ps.pick = max(0, min(len(ps.rows)-1, ps.pick+delta)) // nothing changes until enter
+		ps.pick = ps.step(ps.pick, delta) // nothing changes until enter
 		return e.take()
 	}
 	if ps.def.IsSelect() {
@@ -208,7 +211,7 @@ func (e *Engine) Move(delta int) Effects {
 	if ps.def.IsContent() || len(ps.rows) == 0 {
 		return e.take() // content panels scroll in the UI
 	}
-	cursor := max(0, min(len(ps.rows)-1, ps.cursor+delta))
+	cursor := ps.step(ps.cursor, delta)
 	if cursor == ps.cursor {
 		return e.take()
 	}
@@ -367,6 +370,7 @@ func (e *Engine) setRows(ps *panelState, cmd string, rs []rows.Row) {
 			}
 		}
 	}
+	e.refilter(ps)
 }
 
 // rowKey is the stable identity of row i: its key path, else its label.
@@ -392,8 +396,8 @@ func (e *Engine) Selection(id string) (rows.Row, bool) { return e.selection(id) 
 // selection returns the row under the cursor of panel id.
 func (e *Engine) selection(id string) (rows.Row, bool) {
 	ps := e.panels[id]
-	if ps == nil || ps.cursor >= len(ps.rows) {
-		return nil, false
+	if ps == nil || ps.cursor >= len(ps.rows) || ps.hidden(ps.cursor) {
+		return nil, false // no rows, or all filtered out
 	}
 	return ps.rows[ps.cursor], true
 }
@@ -457,7 +461,7 @@ func (e *Engine) View(id string) PanelView {
 	inline := n > 0 && e.popups[n-1].inline && e.popups[n-1].id == id
 	v := e.view(id, inline)
 	if inline {
-		v.Cursor = e.panels[id].pick
+		v.Cursor = e.panels[id].pos(e.panels[id].pick)
 	}
 	return v
 }
@@ -499,8 +503,24 @@ func (e *Engine) view(id string, list bool) PanelView {
 	if ps.def.IsSelect() && !list && len(ps.rows) > 0 {
 		v.Lines, v.Columns, v.Marked = only(v.Lines, v.Cursor), only(v.Columns, v.Cursor), only(v.Marked, v.Cursor)
 		v.Cursor = 0 // a select shows just its choice
+	} else if ps.visible != nil {
+		v.Lines, v.Columns, v.Marked = pick(v.Lines, ps.visible), pick(v.Columns, ps.visible), pick(v.Marked, ps.visible)
+		v.Cursor = ps.pos(ps.cursor)
 	}
+	v.Filter = ps.filter
 	return v
+}
+
+// pick keeps the elements of s at idx (nil stays nil).
+func pick[T any](s []T, idx []int) []T {
+	if s == nil {
+		return nil
+	}
+	out := make([]T, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, s[i])
+	}
+	return out
 }
 
 // only keeps element i of s (nil stays nil).

@@ -76,5 +76,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `context:` / `{{ctx.x}}` report migration errors; `c` is no longer reserved
 - [ ] later: remember choices between runs; share selects across apps (all AWS apps)
 
-## M5 — auto-refresh, filter (columns ✅, context ✅ as select panels)
+## Filter ✅
+- [x] `/` filters the focused list panel (or an open picker) as you type; Enter keeps, Esc clears
+- [x] terms match the displayed row text; cursor moves over matches only; no match = no selection
+- [x] re-applied after refreshes; title shows `/text`; `(no matches)`
+- [x] selects: `select: popup` (dialog) or `select: inline` (in place), never both
+- [ ] later: search in content panels; fuzzy matching
+
+## M5 — auto-refresh (columns ✅, context ✅ as select panels, filter ✅)
 ## M6 — example definitions (git-lite, cloudwatch, ecs)

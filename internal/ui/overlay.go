@@ -42,6 +42,9 @@ func (m Model) panelBox(id string, crumbs []string, w, h int) (string, []string)
 		if len(crumbs) > 0 {
 			title = crumbs[len(crumbs)-1] // the slot's tab bar when not drilled in
 		}
+		if f := m.eng.Filter(id); f != "" {
+			title += styleDim.Render(" /" + f)
+		}
 	}
 	if len(crumbs) > 1 {
 		title = strings.Join(crumbs[:len(crumbs)-1], " › ") + " › " + title
@@ -60,7 +63,11 @@ func (m Model) popupBox(pv engine.PopupView, bodyH int) string {
 		}
 		w = min(max(w, 30), m.width)
 		h := min(max(len(lines), 1)+2, max(3, bodyH*70/100))
-		return box(pv.Crumbs[0], m.listLines(pick, true, w-2, h-2), w, h-2, true)
+		title := pv.Crumbs[0]
+		if pick.Filter != "" {
+			title += styleDim.Render(" /" + pick.Filter)
+		}
+		return box(title, m.listLines(pick, true, w-2, h-2), w, h-2, true)
 	}
 	w := max(10, m.width*pv.Width/100)
 	h := max(3, bodyH*pv.Height/100)

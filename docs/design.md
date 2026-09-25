@@ -299,7 +299,8 @@ those panels; a variable whose reference has no value yet is left unset.
   without center panels the left column takes the center's width. There is no implicit main area.
   A drilled-in panel occupies its parent's slot with a breadcrumb title (`Commits › a1b2c3 › Files`);
   a popup is drawn centered over the UI and keeps focus (`tab`/`1-9` do nothing) until `esc`.
-  Esc closes the top popup, else the focused slot's deepest level, else dismisses an action error.
+  Esc closes the top popup or picker, else clears the focused panel's filter, else leaves the focused
+  slot's deepest level, else dismisses an action error.
 - A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough). Streams
   follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
   Tabs expand to 4 spaces and `\r` progress lines keep only their final state.
@@ -328,7 +329,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `enter` / `esc` | open the Enter target (drill down or popup) / go back one level or close the popup |
 | `[` / `]` | previous / next tab: the focused slot's panel tabs, else the (focused or first) content panel's tabs |
 | `ctrl-d/u`, `J/K` | scroll content panel |
-| `/` | filter rows in focused panel |
+| `/` | filter the focused list panel (or an open picker) as you type: case-insensitive, every space-separated term must match the row's text; Enter keeps it (title shows `/text`), Esc clears it. The cursor moves over matching rows only; with no match the panel has no selection. |
 | `r` | refresh focused panel |
 | `1..9` on a select | open its picker (Enter chooses, Esc cancels; focus stays where it was) |
 | `?` | help overlay: focused panel's actions, globals, navigation |

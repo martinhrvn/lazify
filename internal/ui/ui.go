@@ -213,6 +213,13 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.modal = modalHelp
 		m.helpVP.reset(false)
+	case "/":
+		if f := m.eng.Focused(); !m.eng.IsContent(f) {
+			m.modal = modalFilter
+			m.input.Prompt = "/"
+			m.input.SetValue(m.eng.Filter(f))
+			m.input.Focus()
+		}
 	case "enter":
 		return m, m.apply(m.eng.Enter())
 	case "esc":
@@ -396,7 +403,10 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		}
 		out = append(out, line)
 	}
-	if len(rows) == 0 && v.Err == "" && !v.Loading {
+	switch {
+	case len(rows) == 0 && v.Filter != "":
+		out = append(out, styleDim.Render("(no matches)"))
+	case len(rows) == 0 && v.Err == "" && !v.Loading:
 		out = append(out, styleDim.Render("(empty)"))
 	}
 	return out

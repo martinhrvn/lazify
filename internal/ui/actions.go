@@ -25,6 +25,7 @@ const (
 	modalHelp
 	modalConfirm
 	modalPrompt
+	modalFilter
 )
 
 type toastKind int
@@ -141,6 +142,20 @@ func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m.execute(m.pending, m.pendingReq)
 		}
 		return m, nil
+	case modalFilter:
+		switch k {
+		case "enter": // keep the filter
+			m.modal = modalNone
+			m.input.Blur()
+			return m, nil
+		case "esc": // clear it
+			m.modal = modalNone
+			m.input.Blur()
+			return m, m.apply(m.eng.SetFilter(""))
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, tea.Batch(cmd, m.apply(m.eng.SetFilter(m.input.Value())))
 	case modalPrompt:
 		switch k {
 		case "esc":
@@ -167,14 +182,14 @@ func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
-	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"?", "help"}, {"q", "quit"},
+	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows"}, {"?", "help"}, {"q", "quit"},
 }
 
 // statusLine is the bottom line: an open prompt or confirmation, otherwise
 // the last action's toast followed by as many key hints as fit and "? more".
 func (m Model) statusLine() string {
 	switch m.modal {
-	case modalPrompt:
+	case modalPrompt, modalFilter:
 		return ansi.Truncate(m.input.View(), m.width, "…")
 	case modalConfirm:
 		q := fmt.Sprintf("%s: %s? [y/N]", m.pending.Desc(), m.pendingReq.Cmd)
@@ -210,8 +225,14 @@ func (m Model) statusLine() string {
 	if title, ok := m.eng.EnterTarget(); ok {
 		add("enter", title)
 	}
-	if m.eng.CanGoBack() && !m.eng.PickerOpen() {
+	switch f := m.eng.Focused(); {
+	case m.eng.Filter(f) != "":
+		add("esc", "clear filter")
+	case m.eng.CanGoBack() && !m.eng.PickerOpen():
 		add("esc", "back")
+	}
+	if !m.eng.IsContent(m.eng.Focused()) {
+		add("/", "filter")
 	}
 	if _, popup := m.eng.Popup(); !popup && len(m.eng.Tabs(m.eng.FocusedSlot())) > 1 {
 		add("[/]", "tabs")

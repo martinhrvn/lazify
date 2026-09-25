@@ -130,7 +130,11 @@ func (e *Engine) Enter() Effects {
 // false when there was nothing to close.
 func (e *Engine) Back() (Effects, bool) {
 	if e.PickerOpen() {
-		e.popups = e.popups[:len(e.popups)-1] // cancel: the choice stays as it was
+		e.closePicker() // cancel: the choice stays as it was
+		return e.take(), true
+	}
+	if ps := e.panels[e.Focused()]; ps.filter != "" {
+		e.setFilter("") // esc clears a filter before leaving a level
 		return e.take(), true
 	}
 	var closed string
