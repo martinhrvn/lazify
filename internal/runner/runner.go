@@ -89,15 +89,22 @@ func (Shell) Stream(ctx context.Context, req Request, onData func([]byte)) error
 	return exitErr(ctx, cmd.Run(), "")
 }
 
+// Interactive builds a command that takes over the terminal (for tea.ExecProcess).
+// Unlike other commands it stays in the terminal's foreground process group,
+// so job control and keyboard input work.
+func Interactive(req Request) *exec.Cmd {
+	cmd := exec.Command("/bin/sh", "-c", req.Cmd)
+	cmd.Dir = req.Dir
+	cmd.Env = environ(req)
+	return cmd
+}
+
 // command builds an `sh -c` command in its own process group, so cancelling
 // ctx kills the whole pipeline.
 func command(ctx context.Context, req Request) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", req.Cmd)
 	cmd.Dir = req.Dir
-	cmd.Env = os.Environ()
-	for k, v := range req.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = environ(req)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -105,6 +112,15 @@ func command(ctx context.Context, req Request) *exec.Cmd {
 	// Don't hang on grandchildren that somehow keep the output pipes open.
 	cmd.WaitDelay = time.Second
 	return cmd
+}
+
+// environ is the inherited environment plus req.Env.
+func environ(req Request) []string {
+	env := os.Environ()
+	for k, v := range req.Env {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 // exitErr maps a finished command's error to ctx.Err() or *ExitError.

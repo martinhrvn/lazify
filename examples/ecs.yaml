@@ -28,6 +28,17 @@ panels:
       - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
       - { title: Status,  value: "{{.status}}" }
     refresh: 10s
+    actions:
+      - key: D
+        desc: Force new deployment
+        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
+        confirm: true
+        refresh: [services, tasks]
+      - key: s
+        desc: Scale
+        prompt: Desired count
+        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
+        refresh: [services]
 
   - id: tasks
     title: Tasks
@@ -40,6 +51,11 @@ panels:
     columns:
       - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
       - { title: Status, value: "{{.lastStatus}}" }
+    actions:
+      - key: e
+        desc: Exec shell
+        mode: interactive          # suspends the TUI, gives the terminal to the command
+        cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh
 
   - id: main
     content:
@@ -52,21 +68,3 @@ panels:
           - name: Logs
             mode: stream
             cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
-
-actions:
-  services:
-    - key: D
-      desc: Force new deployment
-      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
-      confirm: true
-      refresh: [services, tasks]
-    - key: s
-      desc: Scale
-      prompt: Desired count
-      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
-      refresh: [services]
-  tasks:
-    - key: e
-      desc: Exec shell
-      mode: interactive          # suspends the TUI, gives the terminal to the command
-      cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh

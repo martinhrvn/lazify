@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -206,5 +208,23 @@ func TestStreamIgnoresTimeout(t *testing.T) {
 	err := Shell{}.Stream(context.Background(), Request{Cmd: "sleep 0.2; echo late", Timeout: 50 * time.Millisecond}, c.add)
 	if err != nil || c.String() != "late\n" {
 		t.Errorf("streams must not time out: %v %q", err, c.String())
+	}
+}
+
+func TestInteractiveCommand(t *testing.T) {
+	dir := t.TempDir()
+	cmd := Interactive(Request{Cmd: "vim x", Dir: dir, Env: map[string]string{"AWS_PROFILE": "prod"}})
+	if !reflect.DeepEqual(cmd.Args, []string{"/bin/sh", "-c", "vim x"}) {
+		t.Errorf("args = %v", cmd.Args)
+	}
+	if cmd.Dir != dir || !slices.Contains(cmd.Env, "AWS_PROFILE=prod") {
+		t.Errorf("dir %q env has AWS_PROFILE=prod: %v", cmd.Dir, slices.Contains(cmd.Env, "AWS_PROFILE=prod"))
+	}
+	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+		t.Error("interactive commands must stay in the terminal's foreground process group")
+	}
+	out, err := Interactive(Request{Cmd: "echo $LAZIFY_X", Env: map[string]string{"LAZIFY_X": "ok"}}).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Errorf("run = %q, %v", out, err)
 	}
 }

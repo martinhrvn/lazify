@@ -43,7 +43,7 @@ selected branch.
 | **List panel** | A panel with a `source`: rows, a cursor, a selection. |
 | **Content panel** | A panel with `content` instead of `source`: shows **tabs** of command output (diffs, logs, live tails) for the **active** panel. Scrolls instead of selecting. |
 | **Active panel** | The last focused list panel. Content panels show `content[active]`, else `content.default`. Focusing a content panel does not change it. |
-| **Action** | A key bound on a panel that runs a command against the selected row. |
+| **Action** | A key that runs a command. **Global** actions (top-level `actions:`) work everywhere; **panel** actions (`panels[].actions`) work while that panel is focused and win over a global with the same key. |
 | **Context** | App-wide switchable values (e.g. AWS profile/region) usable as `{{ctx.name}}`. |
 
 ## 4. Definition format
@@ -62,6 +62,10 @@ panels:
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
+    actions:                                           # while Branches is focused
+      - {key: space, desc: Checkout, cmd: "git checkout {{.line}}", refresh: [status, branches, commits]}
+      - {key: n, desc: New branch, prompt: Name, cmd: "git checkout -b {{input}}", refresh: [status, branches]}
+      - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
     source: git log --format='%h%x09%s' {{branches.line}}
@@ -96,12 +100,9 @@ panels:
           - name: Status
             cmd: git -c color.status=always status --short --branch
 
-actions:
-  branches:
-    - key: space
-      desc: Checkout
-      cmd: git checkout {{.line}}
-      refresh: [branches, commits]
+actions:                                             # global: work whatever is focused
+  - {key: R, desc: Fetch, cmd: git fetch --all --prune, refresh: [branches, commits, tags]}
+  - {key: e, desc: Shell, cmd: "${SHELL:-sh}", mode: interactive}
 ```
 
 ### 4.2 AWS example — lazyecs
@@ -137,6 +138,17 @@ panels:
       - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
       - { title: Status,  value: "{{.status}}" }
     refresh: 10s
+    actions:
+      - key: D
+        desc: Force new deployment
+        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
+        confirm: true
+        refresh: [services, tasks]
+      - key: s
+        desc: Scale
+        prompt: Desired count
+        cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
+        refresh: [services]
 
   - id: tasks
     title: Tasks
@@ -149,6 +161,11 @@ panels:
     columns:
       - { title: Task,   value: "{{.taskArn}}" }        # TODO: basename formatting?
       - { title: Status, value: "{{.lastStatus}}" }
+    actions:
+      - key: e
+        desc: Exec shell
+        mode: interactive          # suspends the TUI, gives the terminal to the command
+        cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh
 
   - id: main
     content:
@@ -161,24 +178,6 @@ panels:
           - name: Logs
             mode: stream
             cmd: aws logs tail /ecs/{{services.serviceName}} --follow --format short
-
-actions:
-  services:
-    - key: D
-      desc: Force new deployment
-      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --force-new-deployment
-      confirm: true
-      refresh: [services, tasks]
-    - key: s
-      desc: Scale
-      prompt: Desired count
-      cmd: aws ecs update-service --cluster {{clusters.clusterArn}} --service {{.serviceArn}} --desired-count {{input}}
-      refresh: [services]
-  tasks:
-    - key: e
-      desc: Exec shell
-      mode: interactive          # suspends the TUI, gives the terminal to the command
-      cmd: aws ecs execute-command --cluster {{clusters.clusterArn}} --task {{.taskArn}} --interactive --command /bin/sh
 ```
 
 ### 4.3 Field reference
@@ -202,8 +201,13 @@ actions:
 
 **Content tab**: `name`, `cmd`, `mode: once|stream` (default `once`), `format: text|json` (json = pretty-print/colourise).
 
-**Action**: `key`, `desc`, `cmd`, `prompt` (text → `{{input}}`), `confirm: bool`,
-`mode: background|interactive` (default background), `refresh: [panel ids]`.
+**Action** (top-level `actions:` list = global; `panels[].actions` = per panel): `key`, `desc`,
+`cmd`, `prompt` (asks for text → `{{input}}`), `confirm: bool` (shows the rendered command,
+`[y/N]`), `mode: background|interactive` (default background; interactive hands the terminal
+to the command), `refresh: [panel ids]` (default: the owning list panel; none for globals).
+`{{.x}}` is the owning list panel's row, or the active panel's for globals and content-panel
+actions. After a successful action all caches are dropped, `refresh` panels re-run (after their
+inputs) and content panels re-run. Keys use Bubble Tea names (`D`, `ctrl+x`, `f5`) or `space`.
 
 **Context**: map of name → `{source | values, default}`. Switched with a picker (`c`).
 Also overridable from CLI: `lazify ecs --set region=us-east-1`.
@@ -290,17 +294,21 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `/` | filter rows in focused panel |
 | `r` | refresh focused panel |
 | `c` | context picker |
-| `?` | help: all actions for focused panel |
+| `?` | help overlay: focused panel's actions, globals, navigation |
+| `esc` | dismiss an action error (and close prompts/help) |
 | `q` | quit |
 
-Action keys are per panel; a definition binding a reserved key is a load error.
+Key lookup: open prompt/confirm/help first, then the built-in keys above (reserved: binding one
+is a load error), then the focused panel's actions, then global actions. The bottom line shows
+the last action's toast (`⟳` running, `✓` done, `✗` failed — stays until `esc`) and as many
+hints as fit (panel actions, globals, navigation), with `? more` pinned at the right.
 
 ## 8. Errors
 
 - Non-zero exit: panel/tab shows stderr in an error style; keeps previous rows as stale if any.
 - jq error / invalid JSON: shown the same way, with the first lines of output.
-- Background action result: toast in the status line; failures stay until dismissed; full
-  output viewable (`o`?).
+- Background action result: toast in the status line; failures show the first error line and
+  stay until `esc`. (Full output in a popup: later.)
 
 ## 9. CLI
 

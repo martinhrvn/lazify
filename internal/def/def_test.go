@@ -47,9 +47,12 @@ func TestLoadGitExample(t *testing.T) {
 	if d.Layout.Focus != "equal" || d.Panel("status").Size.Kind != Fit || d.Panel("tags").Side != "right" {
 		t.Errorf("layout = %+v, status size = %+v, tags side = %q", d.Layout, d.Panel("status").Size, d.Panel("tags").Side)
 	}
-	acts := d.Actions["branches"]
-	if len(acts) != 1 || acts[0].Key != "space" || acts[0].Mode != "background" {
-		t.Errorf("actions = %+v", acts)
+	acts := d.Panel("branches").Actions
+	if len(acts) != 3 || acts[0].Key != "space" || acts[0].Mode != "background" || acts[1].Prompt == "" || !acts[2].Confirm {
+		t.Errorf("branch actions = %+v %+v %+v", acts[0], acts[1], acts[2])
+	}
+	if len(d.Actions) != 2 || d.Actions[0].Key != "R" || d.Actions[1].Mode != "interactive" {
+		t.Errorf("global actions = %+v", d.Actions)
 	}
 	if tabs := d.Panel("main").Content["commits"].Tabs; len(tabs) != 1 || tabs[0].Mode != "once" || tabs[0].Format != "text" {
 		t.Errorf("tabs = %+v", tabs)
@@ -82,7 +85,7 @@ func TestLoadECSExample(t *testing.T) {
 	if d.Panel("main").Content["tasks"].Tabs[0].Mode != "stream" {
 		t.Error("stream mode not parsed")
 	}
-	if d.Actions["tasks"][0].Mode != "interactive" || !d.Actions["services"][0].Confirm {
+	if d.Panel("tasks").Actions[0].Mode != "interactive" || !d.Panel("services").Actions[0].Confirm {
 		t.Error("action mode/confirm not parsed")
 	}
 	if d.Env["AWS_PROFILE"] == nil {
@@ -172,13 +175,16 @@ func TestValidationErrors(t *testing.T) {
 		{"default id reserved", "panels:\n  - {id: default, source: x}", "panel default: id is reserved"},
 		{"old detail key", "panels: [{id: a, source: x}]\ndetail:\n  a: {tabs: [{name: n, cmd: c}]}", "t.yaml:2: detail: was replaced by content panels"},
 		{"bad side", "panels:\n  - {id: a, source: x, side: middle}", "side must be left, center or right"},
-		{"action unknown panel", "panels: [{id: a, source: x}]\nactions:\n  b: [{key: x, cmd: c}]", "actions: unknown panel \"b\""},
-		{"action no key", "panels: [{id: a, source: x}]\nactions:\n  a: [{cmd: c}]", "key is required"},
-		{"action reserved key", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: q, cmd: c}]", "key \"q\" is reserved"},
-		{"action dup key", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c}, {key: x, cmd: d}]", "duplicate key \"x\""},
-		{"action bad mode", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c, mode: loud}]", "mode"},
-		{"action input without prompt", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: 'c {{input}}'}]", "prompt"},
-		{"action refresh unknown", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c, refresh: [z]}]", "refresh: unknown panel \"z\""},
+		{"old actions map", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c}]", "t.yaml:2: actions: panel actions now live in the panel"},
+		{"action no key", "panels:\n  - id: a\n    source: x\n    actions: [{cmd: c}]", "panel a: action: key is required"},
+		{"action reserved key", "panels:\n  - id: a\n    source: x\n    actions: [{key: q, cmd: c}]", "key \"q\" is reserved"},
+		{"action dup key", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: c}, {key: x, cmd: d}]", "duplicate key \"x\""},
+		{"action bad mode", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: c, mode: loud}]", "mode"},
+		{"action input without prompt", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: 'c {{input}}'}]", "prompt"},
+		{"action refresh unknown", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: c, refresh: [z]}]", "refresh: unknown panel \"z\""},
+		{"global no cmd", "actions:\n  - {key: x}\npanels: [{id: a, source: x}]", "t.yaml:2: global action \"x\": cmd is required"},
+		{"global dup key", "actions:\n  - {key: x, cmd: c}\n  - {key: x, cmd: d}\npanels: [{id: a, source: x}]", "t.yaml:3: global action \"x\": duplicate key"},
+		{"global reserved", "actions: [{key: tab, cmd: c}]\npanels: [{id: a, source: x}]", "key \"tab\" is reserved"},
 		{"ctx source and values", "context:\n  r: {source: x, values: [a]}\npanels: [{id: a, source: x}]", "exactly one of source or values"},
 		{"ctx neither", "context:\n  r: {default: a}\npanels: [{id: a, source: x}]", "exactly one of source or values"},
 		{"ctx source refs panel", "context:\n  r: {source: 'x {{a.b}}'}\npanels: [{id: a, source: x}]", "context r"},
@@ -215,7 +221,11 @@ env:
   R: "{{ctx.region}}"
 panels:
   - {id: a, source: "x {{ctx.region}}", children: b}
-  - {id: b, source: "x {{a.y}}"}
+  - id: b
+    source: "x {{a.y}}"
+    actions:
+      - {key: s, cmd: "c {{.q}} {{input}}", prompt: Count, refresh: [a, b]}
+      - {key: F, desc: Override, cmd: "c {{.q}}"}
   - id: main
     content:
       b:
@@ -223,8 +233,7 @@ panels:
       default:
         tabs: [{name: row, cmd: "echo {{.}}", format: json}]
 actions:
-  b:
-    - {key: s, cmd: "c {{.q}} {{input}}", prompt: Count, refresh: [a, b]}
+  - {key: F, desc: Fetch, cmd: "fetch {{ctx.region}} {{.q}}"}
 `
 	if _, err := Parse([]byte(src), "t.yaml"); err != nil {
 		t.Fatal(err)
@@ -404,5 +413,30 @@ func TestListPanelCanBeCentered(t *testing.T) {
 	}
 	if d.Panel("a").Side != "center" {
 		t.Errorf("side = %q", d.Panel("a").Side)
+	}
+}
+
+func TestGlobalAndPanelActions(t *testing.T) {
+	src := `
+actions:
+  - {key: R, desc: Fetch, cmd: git fetch, refresh: [a]}
+  - {key: space, desc: Global space, cmd: echo}
+panels:
+  - id: a
+    source: x
+    actions:
+      - {key: space, desc: Checkout, cmd: "git checkout {{.line}}"}
+      - {key: e, desc: Shell, cmd: sh, mode: interactive, confirm: true}
+`
+	d, err := Parse([]byte(src), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Actions) != 2 || d.Actions[0].Key != "R" || d.Actions[0].Refresh[0] != "a" {
+		t.Errorf("globals = %+v", d.Actions)
+	}
+	acts := d.Panel("a").Actions
+	if len(acts) != 2 || acts[0].Key != "space" || acts[1].Mode != "interactive" || !acts[1].Confirm {
+		t.Errorf("panel actions = %+v", acts)
 	}
 }

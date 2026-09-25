@@ -39,7 +39,7 @@ type Definition struct {
 	ContextOrder []string
 	Env          map[string]*tmpl.Template
 	Panels       []*Panel
-	Actions      map[string][]*Action
+	Actions      []*Action // global: available whatever is focused
 	Layout       Layout
 	// Order lists panel ids so that every panel comes after the panels it depends on.
 	Order []string
@@ -94,6 +94,9 @@ type Panel struct {
 	// Content makes this a content panel: what to show, keyed by the active
 	// list panel's id or "default". Nil for list panels.
 	Content map[string]*Content
+	// Actions apply while this panel is focused; they win over a global with
+	// the same key.
+	Actions []*Action
 	// Deps are the panels whose selection this panel's source needs, in
 	// declaration order. A drill-in child also depends on its parent.
 	Deps []string
@@ -189,14 +192,14 @@ func Load(path string) (*Definition, error) {
 }
 
 type rawDef struct {
-	Name    string                 `yaml:"name"`
-	Timeout string                 `yaml:"timeout"`
-	Context map[string]rawCtx      `yaml:"context"`
-	Env     map[string]string      `yaml:"env"`
-	Panels  []rawPanel             `yaml:"panels"`
-	Detail  yaml.Node              `yaml:"detail"` // removed; kept to explain the migration
-	Actions map[string][]rawAction `yaml:"actions"`
-	Layout  rawLayout              `yaml:"layout"`
+	Name    string            `yaml:"name"`
+	Timeout string            `yaml:"timeout"`
+	Context map[string]rawCtx `yaml:"context"`
+	Env     map[string]string `yaml:"env"`
+	Panels  []rawPanel        `yaml:"panels"`
+	Detail  yaml.Node         `yaml:"detail"`  // removed; kept to explain the migration
+	Actions yaml.Node         `yaml:"actions"` // list of global actions
+	Layout  rawLayout         `yaml:"layout"`
 }
 
 type rawLayout struct {
@@ -225,6 +228,7 @@ type rawPanel struct {
 	Size     string                `yaml:"size"`
 	Side     string                `yaml:"side"`
 	Content  map[string]rawContent `yaml:"content"`
+	Actions  []rawAction           `yaml:"actions"`
 }
 
 type rawColumn struct {
@@ -441,7 +445,6 @@ func (v *validator) build(raw *rawDef) *Definition {
 		Timeout: DefaultTimeout,
 		Context: map[string]*ContextVar{},
 		Env:     map[string]*tmpl.Template{},
-		Actions: map[string][]*Action{},
 	}
 	if d.Name == "" {
 		d.Name = strings.TrimSuffix(filepath.Base(v.file), filepath.Ext(v.file))
@@ -565,48 +568,63 @@ func (v *validator) build(raw *rawDef) *Definition {
 		v.errorf(v.line("detail"), "detail: was replaced by content panels — move each entry under a panel's content: (see docs/design.md)")
 	}
 
-	for _, id := range v.mapKeys("actions") {
-		if d.Panel(id) == nil {
-			v.errorf(v.line("actions", id), "actions: unknown panel %q", id)
-			continue
+	// Actions last: they may refresh any panel.
+	if raw.Actions.Kind == yaml.MappingNode {
+		v.errorf(v.line("actions"), "actions: panel actions now live in the panel (panels[].actions); top-level actions: is a list of global actions")
+	} else if raw.Actions.Kind != 0 {
+		var globals []rawAction
+		if err := raw.Actions.Decode(&globals); err != nil {
+			v.errorf(v.line("actions"), "actions: %v", err)
 		}
-		seen := map[string]bool{}
-		for ai, ra := range raw.Actions[id] {
-			al := v.line("actions", id, ai)
-			what := fmt.Sprintf("action %s %q", id, ra.Key)
-			a := &Action{Key: ra.Key, Desc: ra.Desc, Prompt: ra.Prompt, Confirm: ra.Confirm,
-				Mode: or(ra.Mode, "background"), Refresh: ra.Refresh}
-			switch {
-			case ra.Key == "":
-				v.errorf(al, "actions %s: key is required", id)
-			case slices.Contains(ReservedKeys, ra.Key):
-				v.errorf(al, "%s: key %q is reserved", what, ra.Key)
-			case seen[ra.Key]:
-				v.errorf(al, "%s: duplicate key %q", what, ra.Key)
-			}
-			seen[ra.Key] = true
-			if ra.Cmd == "" {
-				v.errorf(al, "%s: cmd is required", what)
-			} else {
-				a.Cmd, _ = v.template(al, what, ra.Cmd, d, refRules{row: true, panels: true, input: true})
-				if a.Cmd != nil && a.Prompt == "" && slices.ContainsFunc(a.Cmd.Refs(), func(r tmpl.Ref) bool {
-					return r.Scope == tmpl.ScopeInput
-				}) {
-					v.errorf(al, "%s: uses {{input}} but has no prompt", what)
-				}
-			}
-			if a.Mode != "background" && a.Mode != "interactive" {
-				v.errorf(al, "%s: mode must be background or interactive, got %q", what, a.Mode)
-			}
-			for _, r := range ra.Refresh {
-				if d.Panel(r) == nil {
-					v.errorf(al, "%s: refresh: unknown panel %q", what, r)
-				}
-			}
-			d.Actions[id] = append(d.Actions[id], a)
+		d.Actions = v.actions(d, globals, "global action", "actions")
+	}
+	for i, rp := range raw.Panels {
+		if p := d.Panel(rp.ID); p != nil && p.Actions == nil && len(rp.Actions) > 0 {
+			p.Actions = v.actions(d, rp.Actions, "panel "+p.ID+": action", "panels", i, "actions")
 		}
 	}
 	return d
+}
+
+// actions validates one list of actions (global, or one panel's) found at path.
+func (v *validator) actions(d *Definition, raws []rawAction, what string, path ...any) []*Action {
+	var out []*Action
+	seen := map[string]bool{}
+	for ai, ra := range raws {
+		al := v.line(append(slices.Clone(path), ai)...)
+		w := fmt.Sprintf("%s %q", what, ra.Key)
+		a := &Action{Key: ra.Key, Desc: ra.Desc, Prompt: ra.Prompt, Confirm: ra.Confirm,
+			Mode: or(ra.Mode, "background"), Refresh: ra.Refresh}
+		switch {
+		case ra.Key == "":
+			v.errorf(al, "%s: key is required", what)
+		case slices.Contains(ReservedKeys, ra.Key):
+			v.errorf(al, "%s: key %q is reserved", w, ra.Key)
+		case seen[ra.Key]:
+			v.errorf(al, "%s: duplicate key %q", w, ra.Key)
+		}
+		seen[ra.Key] = true
+		if ra.Cmd == "" {
+			v.errorf(al, "%s: cmd is required", w)
+		} else {
+			a.Cmd, _ = v.template(al, w, ra.Cmd, d, refRules{row: true, panels: true, input: true})
+			if a.Cmd != nil && a.Prompt == "" && slices.ContainsFunc(a.Cmd.Refs(), func(r tmpl.Ref) bool {
+				return r.Scope == tmpl.ScopeInput
+			}) {
+				v.errorf(al, "%s: uses {{input}} but has no prompt", w)
+			}
+		}
+		if a.Mode != "background" && a.Mode != "interactive" {
+			v.errorf(al, "%s: mode must be background or interactive, got %q", w, a.Mode)
+		}
+		for _, r := range ra.Refresh {
+			if d.Panel(r) == nil {
+				v.errorf(al, "%s: refresh: unknown panel %q", w, r)
+			}
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // layout validates the layout block and fills in defaults.

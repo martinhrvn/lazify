@@ -37,7 +37,12 @@ See `docs/design.md` §11 for milestone scope.
 - [ ] later: shorthand for single-tab entries (`commits: {cmd: ...}`)
 - [ ] later: tab names optional when there is one tab (title from the panel)
 
-## M4 — actions
+## M4 — actions ✅
+- [x] global actions (top-level `actions:` list) + panel actions (`panels[].actions`), panel wins on a clash
+- [x] background (toast ⟳/✓/✗), interactive (`tea.ExecProcess`), `confirm`, `prompt` → `{{input}}`
+- [x] after success: caches dropped, `refresh` panels (default: own panel) and content re-run
+- [x] hint bar (fits the width, `? more`) and `?` help overlay (reusable `overlay`)
+- [ ] later: full action output in a popup (`o`), multi-select / bulk actions, a spinner for running actions
 ## Enter on a row — popup or drill-down
 Each panel can bind Enter to one of two behaviours. Esc always goes back one level.
 - [ ] **drill-down** (lazygit-style): Enter replaces the panel's contents with its `children` panel

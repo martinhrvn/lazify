@@ -9,6 +9,10 @@ panels:
   - id: branches
     title: Branches
     source: git branch --format='%(refname:short)'     # plain lines → rows {line}
+    actions:                                           # while Branches is focused
+      - {key: space, desc: Checkout, cmd: "git checkout {{.line}}", refresh: [status, branches, commits]}
+      - {key: n, desc: New branch, prompt: Name, cmd: "git checkout -b {{input}}", refresh: [status, branches]}
+      - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
     source: git log --format='%h%x09%s' {{branches.line}}
@@ -43,9 +47,6 @@ panels:
           - name: Status
             cmd: git -c color.status=always status --short --branch
 
-actions:
-  branches:
-    - key: space
-      desc: Checkout
-      cmd: git checkout {{.line}}
-      refresh: [branches, commits]
+actions:                                             # global: work whatever is focused
+  - {key: R, desc: Fetch, cmd: git fetch --all --prune, refresh: [branches, commits, tags]}
+  - {key: e, desc: Shell, cmd: "${SHELL:-sh}", mode: interactive}

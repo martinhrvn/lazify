@@ -93,6 +93,12 @@ func key(t *testing.T, m tea.Model, k string) tea.Model {
 		msg = tea.KeyMsg{Type: tea.KeyDown}
 	case "ctrl+d":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "space":
+		msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
 	case "ctrl+u":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:
@@ -110,6 +116,7 @@ func start(t *testing.T, src string, r runner.Runner) tea.Model {
 	}
 	model := New(d, r, nil)
 	model.debounce = 0
+	model.toastTTL = 0 // keep toasts visible; a real expiry would sleep in drive()
 	var m tea.Model = model
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return drive(t, m, m.Init())

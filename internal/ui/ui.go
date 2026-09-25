@@ -5,10 +5,12 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -40,8 +42,19 @@ type Model struct {
 	vps      map[string]*viewport // per content panel; pointers so View can apply follow
 	vpIDs    map[string]string    // ContentView.ID each viewport belongs to
 	debounce time.Duration
-	width    int
-	height   int
+	toastTTL time.Duration // how long a success toast stays; 0 = until replaced
+
+	// Actions: an open modal, the action it is for, and the last toast.
+	modal       modal
+	pending     engine.ActionRef
+	pendingReq  runner.Request
+	input       textinput.Model
+	helpVP      *viewport
+	toast       *toast
+	toastSeq    int
+	execProcess func(*exec.Cmd, tea.ExecCallback) tea.Cmd // tea.ExecProcess; swapped in tests
+	width       int
+	height      int
 }
 
 type settleMsg struct{ id uint64 }
@@ -55,14 +68,18 @@ type finishedMsg struct {
 // New creates the model. ctx overrides context defaults.
 func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 	return Model{
-		def:      d,
-		eng:      engine.New(d, ctx),
-		runner:   r,
-		cancels:  map[uint64]context.CancelFunc{},
-		streams:  map[uint64]<-chan streamEvent{},
-		vps:      map[string]*viewport{},
-		vpIDs:    map[string]string{},
-		debounce: engine.Debounce,
+		def:         d,
+		eng:         engine.New(d, ctx),
+		runner:      r,
+		cancels:     map[uint64]context.CancelFunc{},
+		streams:     map[uint64]<-chan streamEvent{},
+		vps:         map[string]*viewport{},
+		vpIDs:       map[string]string{},
+		debounce:    engine.Debounce,
+		toastTTL:    3 * time.Second,
+		input:       newPrompt(),
+		helpVP:      &viewport{},
+		execProcess: tea.ExecProcess,
 	}
 }
 
@@ -128,7 +145,16 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		if ch, ok := m.streams[msg.id]; ok {
 			return m, waitStream(msg.id, ch)
 		}
+	case actionDoneMsg:
+		return m.actionDone(msg)
+	case toastExpireMsg:
+		if m.toast != nil && m.toast.seq == msg.seq {
+			m.toast = nil
+		}
 	case tea.KeyMsg:
+		if m.modal != modalNone {
+			return m.modalKey(msg)
+		}
 		return m.key(msg)
 	}
 	return m, nil
@@ -136,6 +162,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	k := msg.String()
+	if k == " " {
+		k = "space" // the name definitions use
+	}
 	switch k {
 	case "q", "ctrl+c":
 		for _, cancel := range m.cancels {
@@ -175,6 +204,15 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if i := int(k[0] - '1'); i < len(m.eng.TopLevel()) {
 			return m, m.apply(m.eng.FocusPanel(m.eng.TopLevel()[i]))
+		}
+	case "?":
+		m.modal = modalHelp
+		m.helpVP.reset(false)
+	case "esc":
+		m.toast = nil
+	default:
+		if ref, ok := m.eng.ActionFor(k); ok {
+			return m.trigger(ref)
 		}
 	}
 	return m, nil
@@ -224,7 +262,11 @@ func (m Model) View() string {
 			cols = append(cols, m.column(c.ids, c.w, bodyH))
 		}
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
+	view := lipgloss.JoinHorizontal(lipgloss.Top, cols...) + "\n" + m.statusLine()
+	if m.modal == modalHelp {
+		view = overlay(view, m.helpBox(m.width, m.height), m.width)
+	}
+	return view
 }
 
 // column stacks panels in a box each, sized by the definition's layout rules,
@@ -420,14 +462,6 @@ func (m *Model) syncViewports() {
 			m.viewport(id).reset(v.Live)
 		}
 	}
-}
-
-func (m Model) statusLine() string {
-	hints := []string{"j/k move", "tab focus", "[/] tab", "J/K ctrl+d/u scroll", "r refresh", "q quit"}
-	if m.eng.IsContent(m.eng.Focused()) {
-		hints[0] = "j/k scroll"
-	}
-	return ansi.Truncate(styleHint.Render(strings.Join(hints, " · ")), m.width, "…")
 }
 
 // box draws lines in a rounded border of total width w and inner height h,
