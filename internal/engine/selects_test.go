@@ -234,3 +234,36 @@ panels:
 		t.Errorf("after choosing: %q, focused %q", v.Lines, h.e.Focused())
 	}
 }
+
+func TestEnvInputsDontSeeTheEnv(t *testing.T) {
+	// profile's choices feed the env, so its own command must not depend on
+	// the env: otherwise choosing a profile would change its cache key and
+	// reload the list (and the mark would echo the choice back).
+	h := newHarness(t, selectsDef)
+	if env := h.inflight["profile"].Req.Env; len(env) != 0 {
+		t.Errorf("profile's command got env %v", env)
+	}
+	h.finish("profile", "default\ndev\nprod\n")
+	h.finish("clusters", "web\napi\n")
+	h.finish("clusters:mark", "api\n")
+	h.finish("main", "desc api\n")
+	h.apply(h.e.Pick("profile"))
+	h.apply(h.e.Move(1)) // prod
+	h.enter()
+	h.finish("clusters", "web\napi\n")
+	h.finish("clusters:mark", "api\n")
+	h.move("clusters", -1)
+	if h.settle == 0 {
+		t.Fatal("expected the move to ask for a settle")
+	}
+	h.doSettle() // Settle re-evaluates every panel
+	n := 0
+	for _, c := range h.ran {
+		if c == "aws configure list-profiles" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("profile list ran %d times: %v", n, h.ran)
+	}
+}

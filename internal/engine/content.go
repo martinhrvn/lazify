@@ -203,7 +203,7 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 		v.pending, v.err = false, err.Error()
 		return
 	}
-	k := e.key(cmd) // results are per env + command
+	k := e.key("", cmd) // results are per env + command
 	v.empty = ""
 	stream := t.Mode == "stream"
 	if !v.force {
@@ -239,7 +239,7 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 	}
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID: v.runID, Panel: id, Stream: stream,
-		Req: runner.Request{Cmd: cmd, Env: e.envFor(), Timeout: timeout},
+		Req: runner.Request{Cmd: cmd, Env: e.envFor(""), Timeout: timeout},
 	})
 }
 

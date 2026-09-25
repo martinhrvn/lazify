@@ -22,7 +22,7 @@ func (e *Engine) startMark(ps *panelState) {
 		ps.marks, ps.markErr = nil, err.Error()
 		return
 	}
-	k := e.key(cmd)
+	k := e.key(ps.def.ID, cmd)
 	if ps.markRunID != 0 && ps.markRunCmd == k {
 		return
 	}
@@ -31,7 +31,7 @@ func (e *Engine) startMark(ps *panelState) {
 	ps.markRunID, ps.markRunCmd = e.nextID, k
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID: ps.markRunID, Panel: ps.def.ID, Mark: true,
-		Req: runner.Request{Cmd: cmd, Env: e.envFor(), Timeout: e.def.Timeout},
+		Req: runner.Request{Cmd: cmd, Env: e.envFor(ps.def.ID), Timeout: e.def.Timeout},
 	})
 }
 
@@ -53,7 +53,7 @@ func (e *Engine) cachedMark(ps *panelState) {
 	if err != nil {
 		return
 	}
-	if set, ok := e.mcache[e.key(cmd)]; ok {
+	if set, ok := e.mcache[e.key(ps.def.ID, cmd)]; ok {
 		e.cancelMark(ps)
 		ps.marks, ps.markErr = set, ""
 		return

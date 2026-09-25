@@ -247,7 +247,13 @@ report migration errors. `--set region=us-east-1` sets a select's initial choice
 
 **env**: map applied to every command (sources, content tabs, marks, actions); values may reference
 panels, typically selects (`AWS_PROFILE: "{{profile.line}}"`). Every other list panel then depends on
-those panels; a variable whose reference has no value yet is left unset.
+those panels; a variable whose reference has no value yet is left unset. A panel's own command only sees
+variables built from panels it depends on, so the panels the env is made of (the profile select)
+run with the plain shell environment and never reload when their own choice changes.
+
+**Lint** also rejects a command line that starts with an option (`--flag`) when the line before
+doesn't end with `\`: in a folded (`>`) YAML block a more-indented line keeps its newline, so an
+intended continuation would run as a separate command (e.g. inside `$(...)`).
 
 ## 5. Templates (deliberately tiny)
 

@@ -65,7 +65,7 @@ func TestLoadECSExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, region := d.Panel("profile"), d.Panel("region")
-	if profile.Select != "popup" || profile.Default != "default" || profile.Source == nil || profile.Size.Kind != Fit {
+	if profile.Select != "popup" || profile.Mark == nil || profile.Source == nil || profile.Size.Kind != Fit {
 		t.Errorf("profile = %+v", profile)
 	}
 	if region.Select != "popup" || len(region.Values) != 3 || region.Source != nil {
@@ -670,5 +670,24 @@ func TestSelectModes(t *testing.T) {
 	}
 	if d.Panel("d").IsSelect() || !d.Panel("c").IsSelect() {
 		t.Error("IsSelect")
+	}
+}
+
+func TestBrokenCommandContinuation(t *testing.T) {
+	// In a folded (>) block, a more-indented line keeps its newline, so the
+	// option below becomes a separate (failing) command inside $(...).
+	src := "panels:\n  - id: tasks\n    source: >\n      aws ecs describe-tasks --tasks $(aws ecs list-tasks --cluster c\n               --service-name s --output text)\n"
+	_, err := Parse([]byte(src), "t.yaml")
+	if err == nil || !strings.Contains(err.Error(), "panel tasks: source: line 2 starts with an option (--service-name)") {
+		t.Errorf("err = %v", err)
+	}
+	// Explicit continuations and multi-line scripts are fine.
+	for _, ok := range []string{
+		"panels:\n  - id: a\n    source: |\n      aws ecs list-tasks \\\n        --cluster c\n",
+		"panels:\n  - id: a\n    source: |\n      set -e\n      ls -la\n",
+	} {
+		if _, err := Parse([]byte(ok), "t.yaml"); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
 	}
 }

@@ -333,7 +333,7 @@ func (e *Engine) render(ps *panelState) (string, bool) {
 		ps.pending, ps.err = false, err.Error()
 		return "", false
 	}
-	return e.key(cmd), true
+	return e.key(ps.def.ID, cmd), true
 }
 
 // start begins running the command keyed k for ps, replacing any in-flight run.
@@ -346,7 +346,7 @@ func (e *Engine) start(ps *panelState, k string) {
 	e.fx.Runs = append(e.fx.Runs, Run{
 		ID:    ps.runID,
 		Panel: ps.def.ID,
-		Req:   runner.Request{Cmd: cmdOf(k), Env: e.envFor(), Timeout: e.def.Timeout},
+		Req:   runner.Request{Cmd: cmdOf(k), Env: e.envFor(ps.def.ID), Timeout: e.def.Timeout},
 	})
 }
 

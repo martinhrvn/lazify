@@ -615,6 +615,7 @@ func (v *validator) actions(d *Definition, raws []rawAction, what string, path .
 			v.errorf(al, "%s: cmd is required", w)
 		} else {
 			a.Cmd, _ = v.template(al, w, ra.Cmd, d, refRules{row: true, panels: true, input: true})
+			v.continuation(al, w, ra.Cmd)
 			if a.Cmd != nil && a.Prompt == "" && slices.ContainsFunc(a.Cmd.Refs(), func(r tmpl.Ref) bool {
 				return r.Scope == tmpl.ScopeInput
 			}) {
@@ -695,6 +696,7 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	default:
 		p.Source, p.Deps = v.template(at("source"), what+": source", rp.Source, d,
 			refRules{panels: true, self: p.ID})
+		v.continuation(at("source"), what+": source", rp.Source)
 	}
 
 	p.Default = rp.Default
@@ -809,6 +811,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 				v.errorf(tl, "%s: cmd is required", tw)
 			} else {
 				tab.Cmd, tab.Deps = v.template(tl, tw, rt.Cmd, d, refRules{row: true, panels: true})
+				v.continuation(tl, tw, rt.Cmd)
 			}
 			if tab.Mode != "once" && tab.Mode != "stream" {
 				v.errorf(tl, "%s: mode must be once or stream, got %q", tw, tab.Mode)
@@ -921,6 +924,7 @@ func (v *validator) mark(d *Definition, p *Panel, n yaml.Node, line int) *Mark {
 	} else {
 		var deps []string
 		m.Source, deps = v.template(line, what+": source", src, d, refRules{panels: true, self: p.ID})
+		v.continuation(line, what+": source", src)
 		for _, dep := range deps {
 			if !slices.Contains(p.Deps, dep) {
 				p.Deps = append(p.Deps, dep)
@@ -1061,5 +1065,22 @@ func (v *validator) spreadEnvDeps(d *Definition) {
 				p.Deps = append(p.Deps, dep)
 			}
 		}
+	}
+}
+
+// continuation reports a command line that starts with an option. That is
+// never a command of its own, and is almost always a YAML trap: in a folded
+// (>) block, a line indented more than the others keeps its newline, so what
+// was meant as a continuation runs as a separate command.
+func (v *validator) continuation(line int, what, cmd string) {
+	lines := strings.Split(strings.TrimRight(cmd, "\n"), "\n")
+	for i := 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(t, "-") || strings.HasSuffix(strings.TrimSpace(lines[i-1]), "\\") {
+			continue
+		}
+		v.errorf(line, "%s: line %d starts with an option (%s) but the line before doesn't end with \\ — "+
+			"in a folded (>) block a more-indented line keeps its newline; indent it like the other lines, or end the previous line with \\",
+			what, i+1, strings.Fields(t)[0])
 	}
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -13,15 +14,19 @@ import (
 // context such as an AWS profile or region: other panels and the env read
 // their choice like any selection ({{region.line}}).
 
-// envFor renders the env for a command about to run. A variable whose
-// references have no value yet (a select still loading) is left unset.
-func (e *Engine) envFor() map[string]string {
+// envFor renders the env for a command of panel id ("" for content tabs and
+// actions, which get all of it). A panel only sees variables built from panels
+// it depends on: the panels the env is made of (a profile select) must not
+// depend on their own choice. A variable whose references have no value yet
+// (a select still loading) is left unset.
+func (e *Engine) envFor(id string) map[string]string {
 	env := map[string]string{}
 	r := e.resolver(nil)
+	inputs := e.inputs(id)
 	for k, t := range e.def.Env {
 		ready := true
 		for _, ref := range t.Refs() {
-			if v, ok := r.Resolve(ref); !ok || v == nil {
+			if v, ok := r.Resolve(ref); !ok || v == nil || (id != "" && !inputs[ref.Scope]) {
 				ready = false
 			}
 		}
@@ -32,10 +37,11 @@ func (e *Engine) envFor() map[string]string {
 	return env
 }
 
-// key identifies a command's result: the same command under a different env
-// (another profile or region) is a different result.
-func (e *Engine) key(cmd string) string {
-	env := e.envFor()
+// key identifies the result of panel id's command (see envFor for id): the
+// same command under a different env (another profile or region) is a
+// different result.
+func (e *Engine) key(id, cmd string) string {
+	env := e.envFor(id)
 	names := make([]string, 0, len(env))
 	for k := range env {
 		names = append(names, k)
@@ -46,6 +52,24 @@ func (e *Engine) key(cmd string) string {
 		b.WriteString(k + "=" + env[k] + "\x01")
 	}
 	return b.String() + "\x00" + cmd
+}
+
+// inputs are the panels id depends on, directly or through other panels.
+func (e *Engine) inputs(id string) map[string]bool {
+	seen := map[string]bool{}
+	if id == "" {
+		return seen
+	}
+	queue := slices.Clone(e.def.Panel(id).Deps)
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if !seen[p] {
+			seen[p] = true
+			queue = append(queue, e.def.Panel(p).Deps...)
+		}
+	}
+	return seen
 }
 
 // cmdOf returns the command part of a key.

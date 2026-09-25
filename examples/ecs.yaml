@@ -8,7 +8,7 @@ panels:
     title: Profile
     select: true
     source: aws configure list-profiles
-    default: default
+    mark: {source: 'echo "${AWS_PROFILE:-default}"'}   # start on your current profile
   - id: region
     title: Region
     select: true
@@ -16,9 +16,11 @@ panels:
 
   - id: clusters
     title: Clusters
+    # list-* gives ARNs; describe-* takes at most 100 (services: 10) per call and
+    # fails on none, so xargs feeds them in batches and skips an empty list.
     source: >
-      aws ecs describe-clusters --output json
-      --clusters $(aws ecs list-clusters --query clusterArns --output text)
+      aws ecs list-clusters --query clusterArns --output text | tr '\t' '\n' |
+      xargs -r -n 100 aws ecs describe-clusters --output json --clusters
     rows: .clusters[]
     key: .clusterArn
     label: "{{.clusterName}}"
@@ -26,8 +28,8 @@ panels:
   - id: services
     title: Services
     source: >
-      aws ecs describe-services --cluster {{clusters.clusterArn}} --output json
-      --services $(aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text)
+      aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text | tr '\t' '\n' |
+      xargs -r -n 10 aws ecs describe-services --cluster {{clusters.clusterArn}} --output json --services
     rows: .services[]
     key: .serviceArn
     columns:
@@ -50,9 +52,9 @@ panels:
   - id: tasks
     title: Tasks
     source: >
-      aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json
-      --tasks $(aws ecs list-tasks --cluster {{clusters.clusterArn}}
-               --service-name {{services.serviceName}} --query taskArns --output text)
+      aws ecs list-tasks --cluster {{clusters.clusterArn}} --service-name {{services.serviceName}}
+      --query taskArns --output text | tr '\t' '\n' |
+      xargs -r -n 100 aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json --tasks
     rows: .tasks[]
     key: .taskArn
     columns:
