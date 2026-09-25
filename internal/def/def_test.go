@@ -65,10 +65,10 @@ func TestLoadECSExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, region := d.Panel("profile"), d.Panel("region")
-	if !profile.Select || profile.Default != "default" || profile.Source == nil || profile.Size.Kind != Fit {
+	if profile.Select != "popup" || profile.Default != "default" || profile.Source == nil || profile.Size.Kind != Fit {
 		t.Errorf("profile = %+v", profile)
 	}
-	if !region.Select || len(region.Values) != 3 || region.Source != nil {
+	if region.Select != "popup" || len(region.Values) != 3 || region.Source != nil {
 		t.Errorf("region = %+v", region)
 	}
 	if !reflect.DeepEqual(d.Panel("clusters").Deps, []string{"profile", "region"}) {
@@ -199,6 +199,7 @@ func TestValidationErrors(t *testing.T) {
 		{"global reserved", "actions: [{key: tab, cmd: c}]\npanels: [{id: a, source: x}]", "key \"tab\" is reserved"},
 		{"old context", "context:\n  r: {values: [a]}\npanels: [{id: a, source: x}]", "t.yaml:1: context: was replaced by select panels"},
 		{"source and values", "panels:\n  - {id: a, source: x, values: [b]}", "panel a: use either source or values, not both"},
+		{"bad select mode", "panels:\n  - id: a\n    values: [b]\n    select: dropdown", "t.yaml:4: panel a: select must be true, popup or inline, got \"dropdown\""},
 		{"default without select", "panels:\n  - {id: a, values: [b], default: b}", "panel a: default only applies with select: true"},
 		{"select on content", "panels:\n  - {id: a, source: x}\n  - {id: m, select: true, content: {a: {tabs: [{name: n, cmd: c}]}}}", "panel m: select only applies to list panels"},
 		{"env refs unknown panel", "env:\n  X: '{{nope.line}}'\npanels: [{id: a, source: x}]", "env X: unknown panel \"nope\""},
@@ -592,7 +593,7 @@ panels:
 		t.Fatal(err)
 	}
 	p, dir := d.Panel("profile"), d.Panel("dir")
-	if !p.Select || p.Default != "dev" || p.Size.Kind != Fit || p.Side != "left" {
+	if p.Select != "popup" || p.Default != "dev" || p.Size.Kind != Fit || p.Side != "left" {
 		t.Errorf("profile = %+v", p)
 	}
 	if dir.Side != "right" || dir.Size != (Size{Kind: Fixed, N: 3}) {
@@ -601,7 +602,7 @@ panels:
 	if !reflect.DeepEqual(dir.Values, []string{"/etc", "/tmp"}) || dir.Source != nil || dir.Parser == nil {
 		t.Errorf("values = %v", dir.Values)
 	}
-	if d.Panel("plain").Select || len(d.Panel("plain").Values) != 2 {
+	if d.Panel("plain").IsSelect() || len(d.Panel("plain").Values) != 2 {
 		t.Error("values also work without select")
 	}
 	// Env references make every other list panel depend on those panels…
@@ -654,5 +655,20 @@ func TestCIsFreeForActions(t *testing.T) {
 	// c used to be reserved for a context picker; selects replaced it.
 	if _, err := Parse([]byte("panels:\n  - {id: a, source: x, actions: [{key: c, cmd: copy}]}"), "t.yaml"); err != nil {
 		t.Errorf("c should be usable: %v", err)
+	}
+}
+
+func TestSelectModes(t *testing.T) {
+	d, err := Parse([]byte("panels:\n  - {id: a, values: [x], select: true}\n  - {id: b, values: [x], select: popup}\n  - {id: c, values: [x], select: inline}\n  - {id: d, values: [x], select: false}"), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a": "popup", "b": "popup", "c": "inline", "d": ""} {
+		if got := d.Panel(id).Select; got != want {
+			t.Errorf("%s select = %q, want %q", id, got, want)
+		}
+	}
+	if d.Panel("d").IsSelect() || !d.Panel("c").IsSelect() {
+		t.Error("IsSelect")
 	}
 }

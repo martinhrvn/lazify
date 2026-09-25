@@ -231,7 +231,7 @@ func checkSet(d *def.Definition, set map[string]string) error {
 	for id, val := range set {
 		p := d.Panel(id)
 		switch {
-		case p == nil || !p.Select:
+		case p == nil || !p.IsSelect():
 			return fmt.Errorf("--set %s: no select panel %q", id, id)
 		case p.Values != nil && !slices.Contains(p.Values, val):
 			return fmt.Errorf("--set %s: %q is not one of %s", id, val, strings.Join(p.Values, ", "))

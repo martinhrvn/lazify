@@ -341,7 +341,11 @@ func (m Model) wantLines(id string) int {
 
 // panelLines renders a panel's content, scrolled so the cursor is visible.
 func (m Model) panelLines(id string, w, h int) []string {
-	v := m.eng.View(id)
+	return m.listLines(m.eng.View(id), id == m.eng.Focused(), w, h)
+}
+
+// listLines renders a list view; focused shows the cursor.
+func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 	var head, rows []string
 	switch {
 	case v.Blocked != "":
@@ -383,7 +387,7 @@ func (m Model) panelLines(id string, w, h int) []string {
 	for i := offset; i < len(rows) && i < offset+avail; i++ {
 		line := ansi.Truncate(rows[i], w, "…")
 		switch {
-		case i == v.Cursor && id == m.eng.Focused():
+		case i == v.Cursor && focused:
 			line = styleCursor.Render(padRight(line, w))
 		case v.Stale:
 			line = styleDim.Render(line)

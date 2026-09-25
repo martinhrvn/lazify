@@ -13,6 +13,7 @@ import (
 type popupLevel struct {
 	id            string
 	picker        bool // a select's picker (see Pick)
+	inline        bool // …drawn in the select's own box, not as a dialog
 	width, height int  // percent of the screen
 	full          bool
 }
@@ -198,6 +199,9 @@ func (e *Engine) Popup() (PopupView, bool) {
 	path := []string{e.Top(e.slot())}
 	for _, p := range e.popups {
 		path = append(path, p.id)
+	}
+	if top.inline {
+		return PopupView{}, false // drawn in place
 	}
 	if top.picker {
 		return PopupView{ID: top.id, Picker: true, Crumbs: []string{e.def.Panel(top.id).Title}}, true

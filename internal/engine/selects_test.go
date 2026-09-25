@@ -79,7 +79,7 @@ func TestPickerCommitsOnlyOnEnter(t *testing.T) {
 	if h.e.Focused() != "region" || !h.e.PickerOpen() {
 		t.Fatalf("picker not open: focused %q", h.e.Focused())
 	}
-	if v := h.e.View("region"); !reflect.DeepEqual(v.Lines, []string{"eu-west-1", "us-east-1"}) || v.Cursor != 0 {
+	if v := h.e.PickerView("region"); !reflect.DeepEqual(v.Lines, []string{"eu-west-1", "us-east-1"}) || v.Cursor != 0 {
 		t.Errorf("picker view = %+v", v)
 	}
 	n := len(h.ran)
@@ -115,7 +115,7 @@ func TestPickerEscCancels(t *testing.T) {
 	}
 	// Re-opening starts on the committed choice again.
 	h.apply(h.e.Pick("region"))
-	if v := h.e.View("region"); v.Cursor != 0 {
+	if v := h.e.PickerView("region"); v.Cursor != 0 {
 		t.Errorf("picker cursor = %d", v.Cursor)
 	}
 }
@@ -185,5 +185,52 @@ func TestSelectFailureShowsError(t *testing.T) {
 	}
 	if v := h.e.View("clusters"); v.Blocked != "no selection in profile" {
 		t.Errorf("clusters = %+v", v)
+	}
+}
+
+func TestPopupPickerKeepsTheSelectToOneLine(t *testing.T) {
+	h := loadedSelects(t) // region is select: true (popup)
+	h.apply(h.e.Pick("region"))
+	if v := h.e.View("region"); len(v.Lines) != 1 {
+		t.Errorf("the select itself must keep showing only its choice: %q", v.Lines)
+	}
+	pv := h.e.PickerView("region")
+	if !reflect.DeepEqual(pv.Lines, []string{"eu-west-1", "us-east-1"}) || pv.Cursor != 0 {
+		t.Errorf("picker view = %+v", pv)
+	}
+	if p, ok := h.e.Popup(); !ok || !p.Picker || p.ID != "region" {
+		t.Errorf("popup = %+v %v", p, ok)
+	}
+	h.apply(h.e.Move(1))
+	if h.e.PickerView("region").Cursor != 1 {
+		t.Error("j moves the picker cursor")
+	}
+}
+
+func TestInlinePicker(t *testing.T) {
+	src := `
+panels:
+  - {id: dir, select: inline, values: [/etc, /tmp, /]}
+  - {id: files, source: "ls {{dir.line}}"}
+`
+	h := newHarness(t, src)
+	h.finish("files", "passwd\n")
+	h.apply(h.e.Pick("dir"))
+	if _, ok := h.e.Popup(); ok {
+		t.Error("an inline picker draws no dialog")
+	}
+	if !h.e.PickerOpen() || h.e.Focused() != "dir" {
+		t.Errorf("picker open %v, focused %q", h.e.PickerOpen(), h.e.Focused())
+	}
+	if v := h.e.View("dir"); !reflect.DeepEqual(v.Lines, []string{"/etc", "/tmp", "/"}) || v.Cursor != 0 {
+		t.Errorf("inline picker expands the select in place: %+v", v)
+	}
+	h.apply(h.e.Move(1))
+	h.enter()
+	if got := h.cmd("files"); got != "ls /tmp" {
+		t.Errorf("files = %q", got)
+	}
+	if v := h.e.View("dir"); !reflect.DeepEqual(v.Lines, []string{"/tmp"}) || h.e.Focused() != "files" {
+		t.Errorf("after choosing: %q, focused %q", v.Lines, h.e.Focused())
 	}
 }

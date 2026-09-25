@@ -4,7 +4,7 @@ name: dirs
 panels:
   - id: dir
     title: Dir
-    select: true                     # one line; its number opens the picker
+    select: inline                   # its number expands it into the list (select: popup = a dialog)
     values: [/etc, /tmp, /]            # directories that exist on any Unix
   - id: files
     title: Files

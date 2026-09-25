@@ -57,7 +57,7 @@ func cmdOf(key string) string {
 // IsSelect reports whether id is a select panel.
 func (e *Engine) IsSelect(id string) bool {
 	p := e.def.Panel(id)
-	return p != nil && p.Select
+	return p != nil && p.IsSelect()
 }
 
 // PickerOpen reports whether the top popup is a select's picker.
@@ -78,7 +78,7 @@ func (e *Engine) Pick(id string) Effects {
 func (e *Engine) openPicker(id string) {
 	ps := e.panels[id]
 	ps.pick = ps.cursor
-	e.popups = append(e.popups, popupLevel{id: id, picker: true})
+	e.popups = append(e.popups, popupLevel{id: id, picker: true, inline: ps.def.Select == "inline"})
 }
 
 // choose commits the picker's choice: the select's selection changes and
@@ -109,7 +109,7 @@ func (e *Engine) initialChoice(ps *panelState) {
 		return
 	}
 	want, ok := e.set[ps.def.ID]
-	if !ok && ps.def.Select {
+	if !ok && ps.def.IsSelect() {
 		want = ps.def.Default
 	}
 	if want == "" {
@@ -142,4 +142,12 @@ func (e *Engine) rowLabel(ps *panelState, i int) string {
 		cells = append(cells, s)
 	}
 	return strings.Join(cells, " ")
+}
+
+// PickerView is a select's full list of choices with the picker cursor, for
+// drawing its picker dialog (View keeps showing just the choice).
+func (e *Engine) PickerView(id string) PanelView {
+	v := e.view(id, true)
+	v.Cursor = e.panels[id].pick
+	return v
 }

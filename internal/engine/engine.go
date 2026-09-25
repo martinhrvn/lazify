@@ -202,7 +202,7 @@ func (e *Engine) Move(delta int) Effects {
 		ps.pick = max(0, min(len(ps.rows)-1, ps.pick+delta)) // nothing changes until enter
 		return e.take()
 	}
-	if ps.def.Select {
+	if ps.def.IsSelect() {
 		return e.take() // a select changes through its picker
 	}
 	if ps.def.IsContent() || len(ps.rows) == 0 {
@@ -450,8 +450,20 @@ func (e *Engine) setFocus(i int) Effects {
 	return e.take()
 }
 
-// View renders a panel for display.
+// View renders a panel for display. A select shows only its choice, unless
+// its inline picker is open.
 func (e *Engine) View(id string) PanelView {
+	n := len(e.popups)
+	inline := n > 0 && e.popups[n-1].inline && e.popups[n-1].id == id
+	v := e.view(id, inline)
+	if inline {
+		v.Cursor = e.panels[id].pick
+	}
+	return v
+}
+
+// view renders a panel; list=false trims a select to its chosen row.
+func (e *Engine) view(id string, list bool) PanelView {
 	ps := e.panels[id]
 	v := PanelView{
 		ID:      id,
@@ -484,13 +496,9 @@ func (e *Engine) View(id string) PanelView {
 		}
 		v.MarkErr = ps.markErr
 	}
-	if ps.def.Select && len(ps.rows) > 0 {
-		if n := len(e.popups); n > 0 && e.popups[n-1].picker && e.popups[n-1].id == id {
-			v.Cursor = ps.pick // the picker lists every choice
-		} else {
-			v.Lines, v.Columns, v.Marked = only(v.Lines, v.Cursor), only(v.Columns, v.Cursor), only(v.Marked, v.Cursor)
-			v.Cursor = 0 // otherwise a select shows just its choice
-		}
+	if ps.def.IsSelect() && !list && len(ps.rows) > 0 {
+		v.Lines, v.Columns, v.Marked = only(v.Lines, v.Cursor), only(v.Columns, v.Cursor), only(v.Marked, v.Cursor)
+		v.Cursor = 0 // a select shows just its choice
 	}
 	return v
 }

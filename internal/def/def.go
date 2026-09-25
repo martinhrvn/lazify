@@ -81,7 +81,7 @@ type Panel struct {
 	Parent  string   // set on the panel another panel's Enter opens
 	TabOf   string   // the panel whose slot this one is a tab in
 	Values  []string // rows written in the definition instead of a source
-	Select  bool     // its selection is chosen in a picker, not by the cursor
+	Select  string   // "popup" or "inline": its selection is chosen in a picker; "" = not a select
 	Default string   // a select's initial choice (key, else label)
 	Refresh time.Duration
 	Mark    *Mark  // which rows to highlight as current; nil = none
@@ -145,6 +145,9 @@ type Action struct {
 	Mode    string // background | interactive
 	Refresh []string
 }
+
+// IsSelect reports whether p is a select panel.
+func (p *Panel) IsSelect() bool { return p.Select != "" }
 
 // IsContent reports whether p is a content panel (as opposed to a list panel).
 func (p *Panel) IsContent() bool { return p.Content != nil }
@@ -247,7 +250,7 @@ type rawPanel struct {
 	Enter    yaml.Node             `yaml:"enter"`
 	TabOf    string                `yaml:"tab_of"`
 	Values   []string              `yaml:"values"`
-	Select   bool                  `yaml:"select"`
+	Select   yaml.Node             `yaml:"select"`
 	Default  string                `yaml:"default"`
 	Refresh  string                `yaml:"refresh"`
 	Size     string                `yaml:"size"`
@@ -531,7 +534,7 @@ func (v *validator) build(raw *rawDef) *Definition {
 			v.errorf(at("side"), "%s: side must be left, center or right, got %q", what, rp.Side)
 		}
 		p.Size = Size{Kind: Flex, N: 1}
-		if rp.Select {
+		if p.IsSelect() {
 			p.Size = Size{Kind: Fit} // a select shows one line: its choice
 		}
 		if rp.Size != "" {
@@ -694,8 +697,17 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 			refRules{panels: true, self: p.ID})
 	}
 
-	p.Select, p.Default = rp.Select, rp.Default
-	if rp.Default != "" && !rp.Select {
+	p.Default = rp.Default
+	switch mode := rp.Select.Value; {
+	case rp.Select.Kind == 0 || mode == "false":
+	case mode == "true" || mode == "popup":
+		p.Select = "popup"
+	case mode == "inline":
+		p.Select = "inline"
+	default:
+		v.errorf(at("select"), "%s: select must be true, popup or inline, got %q", what, mode)
+	}
+	if rp.Default != "" && !p.IsSelect() {
 		v.errorf(at("default"), "%s: default only applies with select: true", what)
 	}
 
@@ -765,7 +777,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
-		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select, "default": rp.Default != "", "values": len(rp.Values) > 0,
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select.Kind != 0, "default": rp.Default != "", "values": len(rp.Values) > 0,
 		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
 	} {
 		if set {

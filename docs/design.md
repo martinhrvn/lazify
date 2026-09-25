@@ -217,7 +217,7 @@ panels:
 | `title` | no | Panel title (defaults to id). |
 | `source` | yes* | Shell command (`sh -c`). May reference other panels. (*or `values`) |
 | `values` | no | Rows written in the definition (`[eu-west-1, us-east-1]`) instead of a `source`; each is `{line: value}`. Runs no command. |
-| `select` | no | `true` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else `default:`, else its `mark`, else the first row. |
+| `select` | no | `popup` (or `true`) or `inline` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker — a dialog (`popup`) or the box itself expanding into the list (`inline`), never both (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else `default:`, else its `mark`, else the first row. |
 | `default` | no | A select's initial choice, matched against the row's `key`, else its label. |
 | `rows` | no | jq expression producing one JSON value per row. Absent ⇒ one row per non-empty output line: `{line}`. |
 | `split` | no | For line output: separator; adds `fields: [...]`. |

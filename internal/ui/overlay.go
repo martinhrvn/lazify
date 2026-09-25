@@ -52,15 +52,15 @@ func (m Model) panelBox(id string, crumbs []string, w, h int) (string, []string)
 // popupBox renders the open popup, sized in percent of the screen body.
 func (m Model) popupBox(pv engine.PopupView, bodyH int) string {
 	if pv.Picker { // sized to its choices
-		lines := m.eng.View(pv.ID).Lines
+		pick := m.eng.PickerView(pv.ID)
+		lines := pick.Lines
 		w := ansi.StringWidth(pv.Crumbs[0]) + 8
 		for _, l := range lines {
 			w = max(w, ansi.StringWidth(l)+6)
 		}
 		w = min(max(w, 30), m.width)
 		h := min(max(len(lines), 1)+2, max(3, bodyH*70/100))
-		title, content := m.panelBox(pv.ID, pv.Crumbs, w, h-2)
-		return box(title, content, w, h-2, true)
+		return box(pv.Crumbs[0], m.listLines(pick, true, w-2, h-2), w, h-2, true)
 	}
 	w := max(10, m.width*pv.Width/100)
 	h := max(3, bodyH*pv.Height/100)

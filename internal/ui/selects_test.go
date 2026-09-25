@@ -73,3 +73,37 @@ func TestFitsWindowWithPicker(t *testing.T) {
 		}
 	}
 }
+
+func TestPopupPickerShowsChoicesOnce(t *testing.T) {
+	m := start(t, selectsUIDef, selectsRunner()) // select: true = popup
+	m = key(t, m, "1")
+	s := screen(m)
+	if n := strings.Count(s, "/tmp"); n != 1 {
+		t.Errorf("/tmp shown %d times, want once (dialog only):\n%s", n, s)
+	}
+	if h := boxHeight(t, s, "[1] Dir"); h != 3 {
+		t.Errorf("the select's own box must stay one line while the dialog is open, height %d", h)
+	}
+}
+
+func TestInlinePickerExpandsInPlace(t *testing.T) {
+	src := strings.Replace(selectsUIDef, "select: true", "select: inline", 1)
+	m := start(t, src, selectsRunner())
+	m = key(t, m, "1")
+	s := screen(m)
+	if n := strings.Count(s, "/tmp"); n != 1 {
+		t.Errorf("/tmp shown %d times, want once (in place):\n%s", n, s)
+	}
+	if h := boxHeight(t, s, "[1] Dir"); h != 5 {
+		t.Errorf("inline picker should expand the box to its 3 choices, height %d:\n%s", h, s)
+	}
+	if strings.Contains(s, "╭─ Dir") {
+		t.Error("an inline picker draws no dialog")
+	}
+	m = key(t, m, "j")
+	m = key(t, m, "enter")
+	s = screen(m)
+	if h := boxHeight(t, s, "[1] Dir"); h != 3 || !strings.Contains(s, "│/usr/share") || !strings.Contains(s, "doc") {
+		t.Errorf("after choosing, the box collapses to the choice (height %d):\n%s", h, s)
+	}
+}
