@@ -20,28 +20,6 @@ func writeDef(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-func TestResolve(t *testing.T) {
-	cfg := t.TempDir()
-	writeDef(t, cfg, "ecs.yaml", validDef)
-	writeDef(t, cfg, "logs.yml", validDef)
-	local := writeDef(t, t.TempDir(), "mine.yaml", validDef)
-
-	tests := []struct{ in, want string }{
-		{local, local},
-		{"ecs", filepath.Join(cfg, "ecs.yaml")},
-		{"logs", filepath.Join(cfg, "logs.yml")},
-	}
-	for _, tt := range tests {
-		got, err := resolve(tt.in, cfg)
-		if err != nil || got != tt.want {
-			t.Errorf("resolve(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
-		}
-	}
-	if _, err := resolve("nope", cfg); err == nil || !strings.Contains(err.Error(), "nope") {
-		t.Errorf("want not-found error naming the definition, got %v", err)
-	}
-}
-
 func TestParseArgs(t *testing.T) {
 	a, err := parseArgs([]string{"ecs", "--set", "region=us-east-1", "--set=profile=prod"})
 	if err != nil {
@@ -83,21 +61,6 @@ func TestLint(t *testing.T) {
 	}
 }
 
-func TestList(t *testing.T) {
-	cfg := t.TempDir()
-	writeDef(t, cfg, "ecs.yaml", "name: lazyecs\n"+validDef)
-	writeDef(t, cfg, "git.yml", validDef)
-	writeDef(t, cfg, "notes.txt", "x")
-
-	var out bytes.Buffer
-	if code := run([]string{"list"}, &out, &bytes.Buffer{}, cfg); code != 0 {
-		t.Fatalf("code %d", code)
-	}
-	if got := strings.Fields(out.String()); !reflect.DeepEqual(got, []string{"ecs", "git"}) {
-		t.Errorf("list = %q", out.String())
-	}
-}
-
 func TestListMissingDirIsEmpty(t *testing.T) {
 	var out bytes.Buffer
 	if code := run([]string{"list"}, &out, &bytes.Buffer{}, filepath.Join(t.TempDir(), "none")); code != 0 {
@@ -124,5 +87,104 @@ func TestUnknownContextInSetIsError(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), `unknown context "region"`) {
 		t.Errorf("stderr = %q", errOut.String())
+	}
+}
+
+const multi = `apps:
+  - id: procs
+    panels: [{id: p, source: ps}]
+  - id: logs
+    name: Log tail
+    panels: [{id: f, source: ls}]
+`
+
+func TestPickApp(t *testing.T) {
+	cfg := t.TempDir()
+	writeDef(t, cfg, "config.yaml", multi)
+	writeDef(t, cfg, "ecs.yaml", validDef)
+	file := writeDef(t, t.TempDir(), "apps.yaml", multi)
+	single := writeDef(t, t.TempDir(), "one.yaml", validDef)
+
+	tests := []struct {
+		args   []string
+		wantID string
+		errHas string
+	}{
+		{args: []string{"logs"}, wantID: "logs"},
+		{args: []string{"ecs"}, wantID: "ecs"},
+		{args: []string{single}, wantID: "one"},
+		{args: []string{file, "procs"}, wantID: "procs"},
+		{args: []string{file}, errHas: "defines 2 apps (procs, logs)"},
+		{args: []string{file, "nope"}, errHas: `no app "nope" in ` + file},
+		{args: []string{"nope"}, errHas: `no app "nope"`},
+	}
+	for _, tt := range tests {
+		d, err := pick(tt.args, cfg)
+		switch {
+		case tt.errHas != "":
+			if err == nil || !strings.Contains(err.Error(), tt.errHas) {
+				t.Errorf("pick(%v) err = %v, want %q", tt.args, err, tt.errHas)
+			}
+		case err != nil:
+			t.Errorf("pick(%v): %v", tt.args, err)
+		case d.ID != tt.wantID:
+			t.Errorf("pick(%v) = %q, want %q", tt.args, d.ID, tt.wantID)
+		}
+	}
+}
+
+func TestListCatalog(t *testing.T) {
+	cfg := t.TempDir()
+	writeDef(t, cfg, "config.yaml", multi)
+	writeDef(t, cfg, "broken.yaml", "panels: [{id: a}]")
+	var out bytes.Buffer
+	if code := run([]string{"list"}, &out, &bytes.Buffer{}, cfg); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 4 || !strings.HasPrefix(lines[0], "ID") {
+		t.Fatalf("list =\n%s", out.String())
+	}
+	if strings.Contains(out.String(), cfg) {
+		t.Errorf("list should show files relative to the config dir:\n%s", out.String())
+	}
+	for i, want := range [][]string{{"broken", "invalid"}, {"logs", "Log tail", "config.yaml"}, {"procs", "config.yaml"}} {
+		for _, w := range want {
+			if !strings.Contains(lines[i+1], w) {
+				t.Errorf("line %q missing %q", lines[i+1], w)
+			}
+		}
+	}
+}
+
+func TestLintWholeCatalog(t *testing.T) {
+	cfg := t.TempDir()
+	writeDef(t, cfg, "config.yaml", multi)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"lint"}, &out, &errOut, cfg); code != 0 {
+		t.Errorf("code %d, stderr %q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "logs: ok") || !strings.Contains(out.String(), "procs: ok") {
+		t.Errorf("out = %q", out.String())
+	}
+	writeDef(t, cfg, "dup.yaml", "id: logs\npanels: [{id: a, source: x}]")
+	writeDef(t, cfg, "broken.yaml", "panels: [")
+	out.Reset()
+	errOut.Reset()
+	if code := run([]string{"lint"}, &out, &errOut, cfg); code != 1 {
+		t.Errorf("code %d", code)
+	}
+	for _, want := range []string{`app "logs" is defined more than once`, "broken.yaml:1"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr %q missing %q", errOut.String(), want)
+		}
+	}
+}
+
+func TestUsageNamesConfigDir(t *testing.T) {
+	var errOut bytes.Buffer
+	run(nil, &bytes.Buffer{}, &errOut, "/home/x/.config/lazify")
+	if !strings.Contains(errOut.String(), "/home/x/.config/lazify") || !strings.Contains(errOut.String(), "lazify <id>") {
+		t.Errorf("usage = %q", errOut.String())
 	}
 }

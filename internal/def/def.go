@@ -2,11 +2,8 @@
 package def
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -32,6 +29,7 @@ var ReservedKeys = []string{
 
 // Definition is a validated app definition.
 type Definition struct {
+	ID           string // how the app is run: `lazify <id>`
 	Name         string
 	File         string
 	Timeout      time.Duration
@@ -201,6 +199,7 @@ func Load(path string) (*Definition, error) {
 }
 
 type rawDef struct {
+	ID      string            `yaml:"id"`
 	Name    string            `yaml:"name"`
 	Timeout string            `yaml:"timeout"`
 	Context map[string]rawCtx `yaml:"context"`
@@ -274,33 +273,8 @@ var yamlLineRe = regexp.MustCompile(`^(?:yaml: )?line (\d+): (.*)$`)
 var unknownFieldRe = regexp.MustCompile(`^field (\S+) not found in type def\.raw(\w+)$`)
 
 var rawTypeNames = map[string]string{
-	"Def": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
+	"Def": "definition", "File": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
 	"Content": "content", "Tab": "tab", "Action": "action", "Layout": "layout",
-}
-
-// Parse validates a definition from YAML. file is used in error messages.
-func Parse(data []byte, file string) (*Definition, error) {
-	var raw rawDef
-	dec := yaml.NewDecoder(strings.NewReader(string(data)))
-	dec.KnownFields(true)
-	var typeErrs Errors
-	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
-		// Type errors (unknown fields, wrong kinds) still leave a usable partial
-		// decode, so keep validating to report everything at once.
-		if _, ok := err.(*yaml.TypeError); !ok {
-			return nil, yamlErrors(file, err)
-		}
-		typeErrs = yamlErrors(file, err)
-	}
-	var root yaml.Node
-	_ = yaml.Unmarshal(data, &root)
-
-	v := &validator{file: file, root: &root, errs: typeErrs}
-	d := v.build(&raw)
-	if len(v.errs) > 0 {
-		return nil, v.errs
-	}
-	return d, nil
 }
 
 func yamlErrors(file string, err error) Errors {
@@ -455,9 +429,6 @@ func (v *validator) build(raw *rawDef) *Definition {
 		Timeout: DefaultTimeout,
 		Context: map[string]*ContextVar{},
 		Env:     map[string]*tmpl.Template{},
-	}
-	if d.Name == "" {
-		d.Name = strings.TrimSuffix(filepath.Base(v.file), filepath.Ext(v.file))
 	}
 	if raw.Timeout != "" {
 		t, err := time.ParseDuration(raw.Timeout)

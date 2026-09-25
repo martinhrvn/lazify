@@ -1,0 +1,28 @@
+# Several apps in one file: copy to ~/.config/lazify/config.yaml and run
+# `lazify procs` or `lazify logs`. Any *.yaml there is scanned.
+apps:
+  - id: procs
+    name: Processes
+    panels:
+      - id: procs
+        title: Processes
+        source: ps -eo pid=,comm= --sort=-%cpu | head -50
+        split: " "
+        label: "{{.line}}"
+      - id: main
+        content:
+          procs:
+            tabs:
+              - {name: Status, cmd: "cat /proc/$(echo {{.line}} | awk '{print $1}')/status"}
+
+  - id: logs
+    name: Log tail
+    panels:
+      - id: files
+        title: Log files
+        source: find . -maxdepth 3 -name '*.log' -type f | sort
+      - id: main
+        content:
+          files:
+            tabs:
+              - {name: Tail, mode: stream, cmd: "tail -n 200 -F {{.line}}"}

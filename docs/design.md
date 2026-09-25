@@ -312,13 +312,30 @@ hints as fit (panel actions, globals, navigation), with `? more` pinned at the r
 - Background action result: toast in the status line; failures show the first error line and
   stay until `esc`. (Full output in a popup: later.)
 
-## 9. CLI
+## 9. CLI and the app catalog
 
-- `lazify <file.yaml>` or `lazify <name>` → looks up `~/.config/lazify/<name>.yaml`.
-- `lazify lint <file>` → validate (refs, cycles, reserved keys, jq compiles).
-- `lazify list` → available definitions.
+Apps live in `$XDG_CONFIG_HOME/lazify` (default `~/.config/lazify`): every `*.yaml` / `*.yml`
+there is scanned. A file holds one app (`id` defaults to the file name) or several under
+`apps:` (each needs an `id`); mixing the two in one file is an error. `name` is for display
+and defaults to the id. A broken app never blocks the others; duplicate ids are reported
+when used and by `lint`.
+
+```yaml
+# ~/.config/lazify/config.yaml
+apps:
+  - id: ecs
+    panels: [...]
+  - id: git
+    name: git-lite
+    panels: [...]
+```
+
+- `lazify <id>` → run the app with that id; `lazify <file.yaml> [id]` → run from a file.
+- `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
+- `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
+  arguments, everything in the config folder.
 - `--set ctx=value`.
-- Users get `lazyecs` via a shell alias; no special casing.
+- Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 
 ## 10. Architecture (Go, Bubble Tea — same stack as paleta)
 

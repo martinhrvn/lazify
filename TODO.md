@@ -49,6 +49,13 @@ See `docs/design.md` §11 for milestone scope.
 - [x] mark command runs with its panel (refresh, actions), cached with rows; failure = no marks
 - [ ] later: manual marks / multi-select (with bulk actions)
 
+## Config & CLI ✅
+- [x] app catalog: every `*.yaml` in `~/.config/lazify`, one app per file or several under `apps:`, found by `id`
+- [x] `lazify <id>`, `lazify <file> [id]`, `lazify list` (table, invalid/duplicates marked), `lazify lint` (whole folder)
+- [x] a broken app or file never blocks the others; `file:line` errors inside `apps:`
+- [ ] later: global settings in config.yaml (theme, default layout, key overrides)
+- [ ] later: project-local definitions (e.g. `.lazify.yaml` in the current repo)
+
 ## Enter on a row — popup or drill-down
 Each panel can bind Enter to one of two behaviours. Esc always goes back one level.
 - [ ] **drill-down** (lazygit-style): Enter replaces the panel's contents with its `children` panel
