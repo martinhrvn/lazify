@@ -87,4 +87,10 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `refresh: <interval>` re-runs a panel while it's on screen and idle; quiet, cursor kept by key
 - [x] minimum 1s; timers live in the UI (`refreshMsg`), the engine decides (`AutoRefresh`)
 - [ ] later: pause refreshing while the terminal is unfocused; per-content-tab refresh
+## Helpers ✅
+- [x] `style:` value → decoration lookup (icons, animated spinner, colours; `text: false` = icon only) on columns, labels (`{value, map}`) and whole rows (`row_style`)
+- [x] `format:` ago, duration, bytes, basename, bar; styles key on the value before formatting
+- [x] cursor/mark/dim highlights span coloured cells; spinner ticks only while shown; `loading…` spins
+- [ ] later: themes (remap semantic colours, ASCII icons), more formatters as needed
+
 ## M6 — example definitions (git-lite, cloudwatch, ecs)

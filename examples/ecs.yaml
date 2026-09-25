@@ -75,12 +75,16 @@ panels:
     source: >
       aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text | tr '\t' '\n' |
       xargs -r -n 10 aws ecs describe-services --cluster {{clusters.clusterArn}} --output json --services
-    rows: .services[]
+    # health is computed here (jq), then styled below: styles are lookups, not logic
+    rows: '.services[] | . + {health: (if .runningCount < .desiredCount then "degraded" else "ok" end)}'
     key: .serviceArn
     columns:
       - { title: Service, value: "{{.serviceName}}" }
-      - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
-      - { title: Status,  value: "{{.status}}" }
+      - title: Tasks
+        value: "{{.runningCount}}/{{.desiredCount}}"
+        format: bar                        # ▰▰▰▰▰▱▱▱▱▱ 1/2
+        style: {value: "{{.health}}", map: {degraded: error, ok: ok}}
+      - { title: Status, value: "{{.status}}", style: {ACTIVE: ok, DRAINING: warn, "*": dim} }
     refresh: 10s
 
   - id: tasks
@@ -92,8 +96,14 @@ panels:
     rows: '.tasks[] | . + {id: (.taskArn | split("/") | last)}'   # id: the short task id
     key: .taskArn
     columns:
-      - { title: Task,   value: "{{.id}}" }
-      - { title: Status, value: "{{.lastStatus}}" }
+      - { title: Task, value: "{{.id}}" }
+      - title: Status
+        value: "{{.lastStatus}}"
+        style:                             # value → helper + colour
+          RUNNING: {icon: check, color: ok}
+          STOPPED: {icon: cross, color: error}
+          "*": {spinner: true, color: warn}  # PENDING, PROVISIONING, STOPPING, …
+      - { title: Started, value: "{{.startedAt}}", format: ago }
 
   - id: main
     content:

@@ -16,9 +16,12 @@ panels:
       - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
-    source: git log --format='%h%x09%s' {{branches.line}}
-    split: "\t"                                        # line → fields[0], fields[1]
-    label: "{{.fields.0}} {{.fields.1}}"
+    source: git log --format='%h%x09%s%x09%ct' {{branches.line}}
+    split: "\t"                                        # line → fields[0], fields[1], fields[2]
+    columns:
+      - {title: Commit, value: "{{.fields.0}}", style: {"*": accent}}
+      - {title: Subject, value: "{{.fields.1}}"}
+      - {title: Age, value: "{{.fields.2}}", format: ago, style: {"*": dim}}
     key: .fields.0
     enter: files                                       # Enter drills in
   - id: files

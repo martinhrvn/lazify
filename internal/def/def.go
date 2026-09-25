@@ -68,25 +68,28 @@ type Size struct {
 
 // Panel is a list fed by a shell command.
 type Panel struct {
-	ID      string
-	Title   string
-	Source  *tmpl.Template
-	Rows    string
-	Split   string
-	Parser  *rows.Parser
-	Label   *tmpl.Template // nil when Columns are used
-	Columns []Column
-	Key     []string // path into the row; nil = use the rendered label
-	Enter   *Enter   // what Enter opens for the selected row; nil = nothing
-	Parent  string   // set on the panel another panel's Enter opens
-	TabOf   string   // the panel whose slot this one is a tab in
-	Values  []string // rows written in the definition instead of a source
-	Select  string   // "popup" or "inline": its selection is chosen in a picker; "" = not a select
-	Default string   // a select's initial choice (key, else label)
-	Refresh time.Duration
-	Mark    *Mark  // which rows to highlight as current; nil = none
-	Side    string // left | center | right
-	Size    Size
+	ID       string
+	Title    string
+	Source   *tmpl.Template
+	Rows     string
+	Split    string
+	Parser   *rows.Parser
+	Label    *tmpl.Template // nil when Columns are used
+	Columns  []Column
+	Key      []string // path into the row; nil = use the rendered label
+	Enter    *Enter   // what Enter opens for the selected row; nil = nothing
+	Parent   string   // set on the panel another panel's Enter opens
+	TabOf    string   // the panel whose slot this one is a tab in
+	Values   []string // rows written in the definition instead of a source
+	Select   string   // "popup" or "inline": its selection is chosen in a picker; "" = not a select
+	Default  string   // a select's initial choice (key, else label)
+	Refresh  time.Duration
+	Mark     *Mark  // which rows to highlight as current; nil = none
+	Style    *Style // decorates the label ({value, map})
+	Format   string // formats the label
+	RowStyle *Style // decorates the whole row ({value, map})
+	Side     string // left | center | right
+	Size     Size
 	// Content makes this a content panel: what to show, keyed by the active
 	// list panel's id or "default". Nil for list panels.
 	Content map[string]*Content
@@ -117,8 +120,10 @@ type Enter struct {
 
 // Column is one aligned column of a panel's rows.
 type Column struct {
-	Title string
-	Value *tmpl.Template
+	Title  string
+	Value  *tmpl.Template
+	Style  *Style // keyed on the column's value unless Style.Value is set
+	Format string // a built-in formatter (Formats), "" = none
 }
 
 // Content is what a content panel shows for one active panel: a set of tabs.
@@ -258,11 +263,16 @@ type rawPanel struct {
 	Content  map[string]rawContent `yaml:"content"`
 	Actions  []rawAction           `yaml:"actions"`
 	Mark     yaml.Node             `yaml:"mark"`
+	Style    yaml.Node             `yaml:"style"`
+	Format   string                `yaml:"format"`
+	RowStyle yaml.Node             `yaml:"row_style"`
 }
 
 type rawColumn struct {
-	Title string `yaml:"title"`
-	Value string `yaml:"value"`
+	Title  string    `yaml:"title"`
+	Value  string    `yaml:"value"`
+	Style  yaml.Node `yaml:"style"`
+	Format string    `yaml:"format"`
 }
 
 type rawContent struct {
@@ -737,7 +747,11 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 			continue
 		}
 		t, _ := v.template(line, what+": column", rc.Value, d, display)
-		p.Columns = append(p.Columns, Column{Title: rc.Title, Value: t})
+		col := Column{Title: rc.Title, Value: t, Format: v.format(rc.Format, line, what+": column "+rc.Title)}
+		if rc.Style.Kind != 0 {
+			col.Style = v.style(rc.Style, line, what+": column "+rc.Title+": style", d, true)
+		}
+		p.Columns = append(p.Columns, col)
 	}
 	if p.Label == nil && len(p.Columns) == 0 {
 		if rp.Rows == "" {
@@ -745,6 +759,14 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 		} else {
 			p.Label = tmpl.MustParse("{{.}}")
 		}
+	}
+
+	p.Format = v.format(rp.Format, at("format"), what)
+	if rp.Style.Kind != 0 {
+		p.Style = v.style(rp.Style, at("style"), what+": style", d, false)
+	}
+	if rp.RowStyle.Kind != 0 {
+		p.RowStyle = v.style(rp.RowStyle, at("row_style"), what+": row_style", d, false)
 	}
 
 	if rp.Key != "" {
@@ -783,7 +805,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
 		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select.Kind != 0, "default": rp.Default != "", "values": len(rp.Values) > 0,
-		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0,
+		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0, "style": rp.Style.Kind != 0, "format": rp.Format != "", "row_style": rp.RowStyle.Kind != 0,
 	} {
 		if set {
 			v.errorf(v.line("panels", i, field), "%s: %s only applies to list panels", what, field)

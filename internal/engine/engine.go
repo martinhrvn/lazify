@@ -52,6 +52,10 @@ type PanelView struct {
 	Marked  []bool // per row, when the panel has a mark
 	MarkErr string // why the mark command failed
 	Filter  string // the active filter ("" = none)
+	// Decorations from styles, parallel to Lines / Columns (zero = none).
+	LineDeco []def.Deco
+	CellDeco [][]def.Deco
+	RowDeco  []def.Deco
 }
 
 type panelState struct {
@@ -96,7 +100,8 @@ type Engine struct {
 	slotTab  map[string]int             // active panel tab per slot (index into def.Tabs)
 	nextID   uint64
 	settleID uint64
-	fx       Effects // accumulated by the current call
+	fx       Effects          // accumulated by the current call
+	now      func() time.Time // for the ago formatter; swapped in tests
 }
 
 // New creates an engine. set holds initial choices for select panels (--set).
@@ -112,6 +117,7 @@ func New(d *def.Definition, set map[string]string) *Engine {
 		views:   map[string]*viewState{},
 		stacks:  map[string][]string{},
 		slotTab: map[string]int{},
+		now:     time.Now,
 	}
 	for _, p := range d.Panels {
 		e.panels[p.ID] = &panelState{def: p}
@@ -482,17 +488,15 @@ func (e *Engine) view(id string, list bool) PanelView {
 		v.Headers = append(v.Headers, c.Title)
 	}
 	for _, row := range ps.rows {
-		r := e.resolver(row)
+		rr := e.renderRow(ps, row)
 		if len(ps.def.Columns) > 0 {
-			cells := make([]string, len(ps.def.Columns))
-			for i, c := range ps.def.Columns {
-				cells[i], _ = c.Value.Render(r, tmpl.Display)
-			}
-			v.Columns = append(v.Columns, cells)
+			v.Columns = append(v.Columns, rr.cells)
+			v.CellDeco = append(v.CellDeco, rr.cellDeco)
 		} else {
-			s, _ := ps.def.Label.Render(r, tmpl.Display)
-			v.Lines = append(v.Lines, s)
+			v.Lines = append(v.Lines, rr.line)
+			v.LineDeco = append(v.LineDeco, rr.lineDeco)
 		}
+		v.RowDeco = append(v.RowDeco, rr.rowDeco)
 	}
 	if ps.def.Mark != nil {
 		for i := range ps.rows {
@@ -502,9 +506,11 @@ func (e *Engine) view(id string, list bool) PanelView {
 	}
 	if ps.def.IsSelect() && !list && len(ps.rows) > 0 {
 		v.Lines, v.Columns, v.Marked = only(v.Lines, v.Cursor), only(v.Columns, v.Cursor), only(v.Marked, v.Cursor)
+		v.LineDeco, v.CellDeco, v.RowDeco = only(v.LineDeco, v.Cursor), only(v.CellDeco, v.Cursor), only(v.RowDeco, v.Cursor)
 		v.Cursor = 0 // a select shows just its choice
 	} else if ps.visible != nil {
 		v.Lines, v.Columns, v.Marked = pick(v.Lines, ps.visible), pick(v.Columns, ps.visible), pick(v.Marked, ps.visible)
+		v.LineDeco, v.CellDeco, v.RowDeco = pick(v.LineDeco, ps.visible), pick(v.CellDeco, ps.visible), pick(v.RowDeco, ps.visible)
 		v.Cursor = ps.pos(ps.cursor)
 	}
 	v.Filter = ps.filter

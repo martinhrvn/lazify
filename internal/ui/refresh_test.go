@@ -24,7 +24,9 @@ func TestAutoRefreshTimers(t *testing.T) {
 	}
 	var timers []timer
 	model.every = func(d time.Duration, msg tea.Msg) tea.Cmd {
-		timers = append(timers, timer{d, msg})
+		if _, ok := msg.(refreshMsg); ok { // ignore spinner ticks
+			timers = append(timers, timer{d, msg})
+		}
 		return nil
 	}
 	var m tea.Model = model

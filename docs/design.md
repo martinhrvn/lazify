@@ -69,9 +69,12 @@ panels:
       - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
-    source: git log --format='%h%x09%s' {{branches.line}}
-    split: "\t"                                        # line → fields[0], fields[1]
-    label: "{{.fields.0}} {{.fields.1}}"
+    source: git log --format='%h%x09%s%x09%ct' {{branches.line}}
+    split: "\t"                                        # line → fields[0], fields[1], fields[2]
+    columns:
+      - {title: Commit, value: "{{.fields.0}}", style: {"*": accent}}
+      - {title: Subject, value: "{{.fields.1}}"}
+      - {title: Age, value: "{{.fields.2}}", format: ago, style: {"*": dim}}
     key: .fields.0
     enter: files                                       # Enter drills in
   - id: files
@@ -206,12 +209,16 @@ panels:
     source: >
       aws ecs list-services --cluster {{clusters.clusterArn}} --query serviceArns --output text | tr '\t' '\n' |
       xargs -r -n 10 aws ecs describe-services --cluster {{clusters.clusterArn}} --output json --services
-    rows: .services[]
+    # health is computed here (jq), then styled below: styles are lookups, not logic
+    rows: '.services[] | . + {health: (if .runningCount < .desiredCount then "degraded" else "ok" end)}'
     key: .serviceArn
     columns:
       - { title: Service, value: "{{.serviceName}}" }
-      - { title: Run/Des, value: "{{.runningCount}}/{{.desiredCount}}" }
-      - { title: Status,  value: "{{.status}}" }
+      - title: Tasks
+        value: "{{.runningCount}}/{{.desiredCount}}"
+        format: bar                        # ▰▰▰▰▰▱▱▱▱▱ 1/2
+        style: {value: "{{.health}}", map: {degraded: error, ok: ok}}
+      - { title: Status, value: "{{.status}}", style: {ACTIVE: ok, DRAINING: warn, "*": dim} }
     refresh: 10s
 
   - id: tasks
@@ -223,8 +230,14 @@ panels:
     rows: '.tasks[] | . + {id: (.taskArn | split("/") | last)}'   # id: the short task id
     key: .taskArn
     columns:
-      - { title: Task,   value: "{{.id}}" }
-      - { title: Status, value: "{{.lastStatus}}" }
+      - { title: Task, value: "{{.id}}" }
+      - title: Status
+        value: "{{.lastStatus}}"
+        style:                             # value → helper + colour
+          RUNNING: {icon: check, color: ok}
+          STOPPED: {icon: cross, color: error}
+          "*": {spinner: true, color: warn}  # PENDING, PROVISIONING, STOPPING, …
+      - { title: Started, value: "{{.startedAt}}", format: ago }
 
   - id: main
     content:
@@ -256,6 +269,9 @@ panels:
 | `split` | no | For line output: separator; adds `fields: [...]`. |
 | `label` | no | Row display template. Default: `.line` or the whole value. |
 | `columns` | no | List of `{title, value}` rendered as aligned columns (replaces `label`). |
+| `style` | no | Decorates a value through a lookup table (no expressions): on a column, a map keyed by that column's value, or `{value: "{{.x}}", map: …}` to key on another field; on a panel, `{value, map}` for its label. Each entry is a colour (`ok warn error info dim accent` or `red green yellow blue magenta cyan gray white`) or `{icon, spinner: true, color, bold, text: false}`; `"*"` matches anything else. Keys match the value *before* `format`. |
+| `row_style` | no | `{value, map}`: colours the whole row (its icon goes first). |
+| `format` | no | Built-in formatter for a column's value (or a panel's label): `ago` (RFC3339 / unix s or ms → `3m ago`), `duration` (`1h 2m`), `bytes` (`1.2 MiB`), `basename`, `bar` (`n/m` → `▰▰▰▱▱ 3/5`). Unparseable values show raw. |
 | `key` | no | Row path (template-ref syntax, e.g. `.fields.0`, not jq) giving a stable row identity; used to keep the cursor across refreshes. Default: label. |
 | `tab_of` | no | Makes this list panel a **tab** in another top-level list panel's slot (lazygit's Branches │ Remotes │ Tags). The owner keeps the slot's side, size and number; tabs are ordered owner first, then in declaration order; `[`/`]` switch. Tabs take no `side`/`size`, can't be Enter targets, and all run like any panel (hidden ones too). |
 | `enter` | no | What Enter opens for the selected row: `enter: <panel id>` drills down (the target replaces this panel in its slot), `enter: {panel: <id>, popup: true \| full \| {width, height}}` opens it in a popup (default 80×80 %). A target has one parent, is hidden until entered, takes no `side`/`size`, and may be a content panel. (Replaces the old `children:`.) |
@@ -439,10 +455,8 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 
 - ~~Panel tabs~~: done — `tab_of:`; `[`/`]` switch the focused slot's panel tabs, else content tabs.
 - ~~Current row indicator~~: done — `mark:` (row path or command output as a set).
-- **Colours/status**: declarative value→colour map, e.g.
-  `color: { value: "{{.lastStatus}}", map: { RUNNING: green, STOPPED: red } }` — no expressions.
-- Display helpers (basename of an ARN, relative time) without becoming a language — a fixed
-  small set of formatters, or push it into `rows:` jq (which already can)?
+- ~~Colours/status~~: done — `style:` lookup tables map a value to a helper (icon or spinner) and a colour; logic (e.g. running < desired) is computed as a category in `rows:` jq.
+- ~~Display helpers~~: done — a fixed set of formatters (`format: ago|duration|bytes|basename|bar`).
 - Multi-select + bulk actions?
 - Definition composition / shared selects across apps (all AWS apps share profile/region); remembering choices between runs.
 - ~~Name~~: decided — **lazify**.

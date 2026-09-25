@@ -55,6 +55,8 @@ type Model struct {
 	toastSeq    int
 	execProcess func(*exec.Cmd, tea.ExecCallback) tea.Cmd // tea.ExecProcess; swapped in tests
 	every       func(time.Duration, tea.Msg) tea.Cmd      // timer for auto-refresh (tea.Tick); swapped in tests
+	frame       int                                       // spinner animation frame
+	spinning    bool                                      // a spinner tick is scheduled
 	width       int
 	height      int
 }
@@ -90,6 +92,9 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.apply(m.eng.Start())}
+	if usesAgo(m.def) {
+		cmds = append(cmds, m.every(redrawEvery, redrawMsg{}))
+	}
 	for id, d := range m.eng.RefreshIntervals() {
 		cmds = append(cmds, m.every(d, refreshMsg{id: id, every: d}))
 	}
@@ -134,6 +139,10 @@ func (m Model) apply(fx engine.Effects) tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	next.syncViewports()
+	if !next.spinning && next.spinnerShown() { // animate only while one is on screen
+		next.spinning = true
+		cmd = tea.Batch(cmd, next.every(spinEvery, spinMsg{}))
+	}
 	return next, cmd
 }
 
@@ -149,6 +158,10 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.apply(m.eng.Finished(msg.id, msg.stdout, msg.err))
 	case settleMsg:
 		return m, m.apply(m.eng.Settle(msg.id))
+	case spinMsg:
+		m.frame, m.spinning = m.frame+1, false
+	case redrawMsg: // relative times ("3m ago") move on even when nothing else happens
+		return m, m.every(redrawEvery, redrawMsg{})
 	case refreshMsg: // re-run the panel if it's on screen and idle, then wait again
 		return m, tea.Batch(m.apply(m.eng.AutoRefresh(msg.id)), m.every(msg.every, msg))
 	case streamMsg:
@@ -381,7 +394,7 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		}
 		head = head[:min(len(head), max(1, h/2))]
 	case v.Loading && len(v.Lines)+len(v.Columns) == 0:
-		return []string{styleDim.Render("loading…")}
+		return []string{styleDim.Render(spinnerFrames[m.frame%len(spinnerFrames)] + " loading…")}
 	}
 
 	// Panels with a mark reserve a two-column gutter: "* " for marked rows.
@@ -394,15 +407,36 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 			return "  "
 		}
 	}
+	// A row style's helper goes at the start of the row.
+	rowHelper := func(i int) string {
+		if i < len(v.RowDeco) && (v.RowDeco[i].Icon != "" || v.RowDeco[i].Spinner) {
+			return decorate("", def.Deco{Icon: v.RowDeco[i].Icon, Spinner: v.RowDeco[i].Spinner, HideText: true}, m.frame) + " "
+		}
+		return ""
+	}
 	if len(v.Headers) > 0 {
-		widths := columnWidths(v.Headers, v.Columns)
+		// Decorate first, so column widths account for icons.
+		cells := make([][]string, len(v.Columns))
+		for i, row := range v.Columns {
+			cells[i] = make([]string, len(row))
+			for j, c := range row {
+				if i < len(v.CellDeco) && j < len(v.CellDeco[i]) {
+					c = decorate(c, v.CellDeco[i][j], m.frame)
+				}
+				cells[i][j] = c
+			}
+		}
+		widths := columnWidths(v.Headers, cells)
 		head = append(head, styleHeader.Render(gutter(-1)+alignRow(v.Headers, widths)))
-		for i, cells := range v.Columns {
-			rows = append(rows, gutter(i)+alignRow(cells, widths))
+		for i, row := range cells {
+			rows = append(rows, gutter(i)+rowHelper(i)+alignRow(row, widths))
 		}
 	} else {
 		for i, l := range v.Lines {
-			rows = append(rows, gutter(i)+l)
+			if i < len(v.LineDeco) {
+				l = decorate(l, v.LineDeco[i], m.frame)
+			}
+			rows = append(rows, gutter(i)+rowHelper(i)+l)
 		}
 	}
 
@@ -411,13 +445,18 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 	out := head
 	for i := offset; i < len(rows) && i < offset+avail; i++ {
 		line := ansi.Truncate(rows[i], w, "…")
+		// within(): these styles span coloured cells without being cut short.
 		switch {
 		case i == v.Cursor && focused:
-			line = styleCursor.Render(padRight(line, w))
+			line = within(styleCursor, padRight(line, w))
 		case v.Stale:
-			line = styleDim.Render(line)
+			line = within(styleDim, line)
 		case v.Marked != nil && v.Marked[i]:
-			line = styleMark.Render(line)
+			line = within(styleMark, line)
+		case i < len(v.RowDeco):
+			if st, ok := decoStyle(v.RowDeco[i]); ok {
+				line = within(st, line)
+			}
 		}
 		out = append(out, line)
 	}
@@ -476,7 +515,7 @@ func (m Model) contentParts(id string) (title string, head, body []string, stale
 	if len(v.Lines) == 0 {
 		switch {
 		case v.Loading:
-			head = append(head, styleDim.Render("loading…"))
+			head = append(head, styleDim.Render(spinnerFrames[m.frame%len(spinnerFrames)]+" loading…"))
 		case v.Empty != "":
 			head = append(head, styleDim.Render(v.Empty))
 		case v.Err == "" && !v.Live:

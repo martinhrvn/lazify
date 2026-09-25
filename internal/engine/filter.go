@@ -59,7 +59,7 @@ func (e *Engine) refilter(ps *panelState) {
 	terms := strings.Fields(strings.ToLower(ps.filter))
 	ps.visible = []int{} // non-nil: a filter is active, even with no matches
 	for i := range ps.rows {
-		text := strings.ToLower(e.rowLabel(ps, i))
+		text := strings.ToLower(e.rowText(ps, i))
 		if !slices.ContainsFunc(terms, func(t string) bool { return !strings.Contains(text, t) }) {
 			ps.visible = append(ps.visible, i)
 		}
