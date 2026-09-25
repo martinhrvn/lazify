@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/martinhrvn/lazify/internal/def"
+	"github.com/martinhrvn/lazify/internal/engine"
 	"github.com/martinhrvn/lazify/internal/runner"
 )
 
@@ -74,7 +75,9 @@ func start(t *testing.T, src string, r runner.Runner) tea.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var m tea.Model = New(d, r, nil)
+	model := New(d, r, nil)
+	model.debounce = 0
+	var m tea.Model = model
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return drive(t, m, m.Init())
 }
@@ -298,5 +301,51 @@ func TestFitsWindowWithRightColumn(t *testing.T) {
 				t.Errorf("height %d: line %d is %d wide", h, i, w)
 			}
 		}
+	}
+}
+
+const reactiveDef = `
+panels:
+  - {id: branches, title: Branches, source: git branch}
+  - {id: commits, title: Commits, source: "git log {{branches.line}}"}
+`
+
+func TestDependentPanelFollowsSelection(t *testing.T) {
+	r := &fakeRunner{out: map[string]string{
+		"git branch":      "main\nfeature\n",
+		"git log main":    "a1 main work\n",
+		"git log feature": "b2 feature work\n",
+	}}
+	m := start(t, reactiveDef, r)
+	if s := screen(m); !strings.Contains(s, "a1 main work") {
+		t.Fatalf("commits for main not shown:\n%s", s)
+	}
+	m = key(t, m, "j")
+	s := screen(m)
+	if !strings.Contains(s, "b2 feature work") || strings.Contains(s, "a1 main work") {
+		t.Errorf("commits did not follow branch selection:\n%s", s)
+	}
+	// Going back is served from the cache.
+	n := len(r.ran)
+	m = key(t, m, "k")
+	if !strings.Contains(screen(m), "a1 main work") || len(r.ran) != n {
+		t.Errorf("revisit should come from cache; ran %v", r.ran[n:])
+	}
+}
+
+func TestCancelledRunsAreKilled(t *testing.T) {
+	d, err := def.Parse([]byte(twoPanels), "t.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(d, &fakeRunner{}, nil)
+	killed := false
+	m.cancels[42] = func() { killed = true }
+	m.apply(engine.Effects{Cancel: []uint64{42}})
+	if !killed {
+		t.Error("cancel func not called")
+	}
+	if _, ok := m.cancels[42]; ok {
+		t.Error("cancel func not forgotten")
 	}
 }

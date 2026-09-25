@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,13 +31,16 @@ var (
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	def     *def.Definition
-	eng     *engine.Engine
-	runner  runner.Runner
-	cancels map[uint64]context.CancelFunc
-	width   int
-	height  int
+	def      *def.Definition
+	eng      *engine.Engine
+	runner   runner.Runner
+	cancels  map[uint64]context.CancelFunc
+	debounce time.Duration
+	width    int
+	height   int
 }
+
+type settleMsg struct{ id uint64 }
 
 type finishedMsg struct {
 	id     uint64
@@ -47,19 +51,30 @@ type finishedMsg struct {
 // New creates the model. ctx overrides context defaults.
 func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 	return Model{
-		def:     d,
-		eng:     engine.New(d, ctx),
-		runner:  r,
-		cancels: map[uint64]context.CancelFunc{},
+		def:      d,
+		eng:      engine.New(d, ctx),
+		runner:   r,
+		cancels:  map[uint64]context.CancelFunc{},
+		debounce: engine.Debounce,
 	}
 }
 
-func (m Model) Init() tea.Cmd { return m.exec(m.eng.Start()) }
+func (m Model) Init() tea.Cmd { return m.apply(m.eng.Start()) }
 
-// exec turns engine runs into commands that report back with finishedMsg.
-func (m Model) exec(runs []engine.Run) tea.Cmd {
+// apply carries out engine effects: kills cancelled runs, starts new ones
+// (reporting back with finishedMsg) and schedules the debounced settle.
+func (m Model) apply(fx engine.Effects) tea.Cmd {
+	for _, id := range fx.Cancel {
+		if cancel, ok := m.cancels[id]; ok {
+			cancel()
+			delete(m.cancels, id)
+		}
+	}
 	var cmds []tea.Cmd
-	for _, r := range runs {
+	if fx.Settle != 0 {
+		cmds = append(cmds, tea.Tick(m.debounce, func(time.Time) tea.Msg { return settleMsg{id: fx.Settle} }))
+	}
+	for _, r := range fx.Runs {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancels[r.ID] = cancel
 		cmds = append(cmds, func() tea.Msg {
@@ -79,7 +94,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cancel()
 			delete(m.cancels, msg.id)
 		}
-		return m, m.exec(m.eng.Finished(msg.id, msg.stdout, msg.err))
+		return m, m.apply(m.eng.Finished(msg.id, msg.stdout, msg.err))
+	case settleMsg:
+		return m, m.apply(m.eng.Settle(msg.id))
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -95,15 +112,15 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "j", "down":
-		return m, m.exec(m.eng.Move(1))
+		return m, m.apply(m.eng.Move(1))
 	case "k", "up":
-		return m, m.exec(m.eng.Move(-1))
+		return m, m.apply(m.eng.Move(-1))
 	case "tab":
 		m.eng.FocusNext()
 	case "shift+tab":
 		m.eng.FocusPrev()
 	case "r":
-		return m, m.exec(m.eng.Refresh())
+		return m, m.apply(m.eng.Refresh())
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if i := int(k[0] - '1'); i < len(m.eng.TopLevel()) {
 			m.eng.FocusPanel(m.eng.TopLevel()[i])

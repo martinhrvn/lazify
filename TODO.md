@@ -16,10 +16,12 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `layout.focus: expand|equal`, `left_width`, `right_width`
 - [x] focus order / numbering follows the screen
 
-## M2 — reactive panels
-- [ ] engine: re-run dependents on selection change (topological), cancel in-flight runs
-- [ ] debounce selection changes (~150 ms)
-- [ ] cache by rendered command + env; stale-while-refreshing
+## M2 — reactive panels ✅
+- [x] engine: re-run dependents on selection change (topological), cancel in-flight runs
+- [x] debounce selection changes (~150 ms); cache hits apply instantly
+- [x] cache by rendered command; stale-while-refreshing; errors not cached
+- [x] wait for all inputs to settle (diamonds run once); drill-in children don't run until opened
+- [ ] later: bound the cache (LRU) — currently unbounded
 ## M3 — detail view
 ## M4 — actions
 ## M5 — drill-in, context, columns, auto-refresh, filter

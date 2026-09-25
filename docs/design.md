@@ -205,12 +205,18 @@ Also overridable from CLI: `lazify ecs --set region=us-east-1`.
 
 1. At load, collect references from each panel's `source` → edges `A → B` ("B depends on A").
    Drill-in children also depend on their parent. **Cycles are a load error.**
-2. A panel is **runnable** when every panel it depends on has a selection. Otherwise it shows
-   an empty "no selection in X" state and does not run.
-3. On selection change in A: debounce (~150 ms), then for each dependent B in topological order:
-   cancel B's in-flight run (kill process group), render its command, run.
-   B's new selection (cursor restored by `key`, else first row) propagates further.
-4. **Cache** by *rendered command string + env*. Revisiting a selection shows cached rows
+2. A panel is **runnable** when every panel it depends on is settled (not loading or pending)
+   and has a selection. While an input is loading the panel **waits** (old rows shown stale);
+   if an input has no rows it shows an empty "no selection in X" state and does not run.
+   Drill-in children run only when opened.
+3. On selection change in A, each dependent B (topological order) re-renders its command:
+   - same command as its current rows → nothing to do (e.g. the referenced field didn't change);
+   - cached → rows swap in **immediately**, no debounce;
+   - otherwise B's in-flight run is cancelled (process group killed) and B goes **pending**;
+     after the debounce (~150 ms, only the latest move counts) pending panels run.
+   When B finishes, its selection (cursor restored by `key`, else first row) propagates further.
+   Diamonds run once: a panel waits until all of its inputs have settled.
+4. **Cache** by *rendered command string* (env is fixed per session; context changes clear it). Errors are not cached. Revisiting a selection shows cached rows
    instantly; `r` or the `refresh` interval re-runs. While re-running, old rows are shown
    **dimmed (stale)** rather than blanked.
 5. Detail tabs follow the same rules keyed on the focused panel's selection; only the

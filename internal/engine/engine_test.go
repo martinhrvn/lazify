@@ -31,7 +31,7 @@ panels:
 
 func TestStartRunsRootPanels(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	runs := e.Start()
+	runs := e.Start().Runs
 	if got := panelsOf(runs); !reflect.DeepEqual(got, []string{"branches", "tags"}) {
 		t.Fatalf("runs = %v", got)
 	}
@@ -41,14 +41,14 @@ func TestStartRunsRootPanels(t *testing.T) {
 	if v := e.View("branches"); !v.Loading {
 		t.Error("branches should be loading")
 	}
-	if v := e.View("commits"); v.Blocked != "no selection in branches" {
-		t.Errorf("commits blocked = %q", v.Blocked)
+	if v := e.View("commits"); v.Blocked != "" || !v.Loading {
+		t.Errorf("commits should be waiting for branches, got %+v", v)
 	}
 }
 
 func TestFinishedFillsRows(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	runs := e.Start()
+	runs := e.Start().Runs
 	e.Finished(runs[0].ID, []byte("main\nfeature\n"), nil)
 	v := e.View("branches")
 	if v.Loading || !reflect.DeepEqual(v.Lines, []string{"main", "feature"}) || v.Cursor != 0 {
@@ -58,7 +58,7 @@ func TestFinishedFillsRows(t *testing.T) {
 
 func TestFinishedError(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	runs := e.Start()
+	runs := e.Start().Runs
 	e.Finished(runs[0].ID, nil, errors.New("exit status 128: not a git repository"))
 	if v := e.View("branches"); v.Err != "exit status 128: not a git repository" || v.Loading {
 		t.Errorf("view = %+v", v)
@@ -67,8 +67,8 @@ func TestFinishedError(t *testing.T) {
 
 func TestErrorKeepsOldRowsAsStale(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	e.Finished(e.Start()[0].ID, []byte("main\n"), nil)
-	run := e.Refresh()
+	e.Finished(e.Start().Runs[0].ID, []byte("main\n"), nil)
+	run := e.Refresh().Runs
 	if v := e.View("branches"); !v.Stale || len(v.Lines) != 1 {
 		t.Errorf("while refreshing: %+v", v)
 	}
@@ -80,7 +80,7 @@ func TestErrorKeepsOldRowsAsStale(t *testing.T) {
 
 func TestParseErrorIsShown(t *testing.T) {
 	e := New(mustDef(t, "panels: [{id: a, source: x, rows: '.[]'}]"), nil)
-	e.Finished(e.Start()[0].ID, []byte("not json"), nil)
+	e.Finished(e.Start().Runs[0].ID, []byte("not json"), nil)
 	if v := e.View("a"); v.Err == "" {
 		t.Errorf("want parse error, view = %+v", v)
 	}
@@ -88,8 +88,8 @@ func TestParseErrorIsShown(t *testing.T) {
 
 func TestStaleResultIgnored(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	first := e.Start()[0]
-	second := e.Refresh()[0]
+	first := e.Start().Runs[0]
+	second := e.Refresh().Runs[0]
 	e.Finished(first.ID, []byte("old\n"), nil)
 	if v := e.View("branches"); len(v.Lines) != 0 || !v.Loading {
 		t.Errorf("superseded result applied: %+v", v)
@@ -102,7 +102,7 @@ func TestStaleResultIgnored(t *testing.T) {
 
 func TestMoveClamps(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	e.Finished(e.Start()[0].ID, []byte("a\nb\nc\n"), nil)
+	e.Finished(e.Start().Runs[0].ID, []byte("a\nb\nc\n"), nil)
 	e.Move(1)
 	e.Move(1)
 	e.Move(5)
@@ -117,15 +117,15 @@ func TestMoveClamps(t *testing.T) {
 
 func TestCursorRestoredByKeyOnRefresh(t *testing.T) {
 	e := New(mustDef(t, gitDef), nil)
-	runs := e.Start()
+	runs := e.Start().Runs
 	e.Finished(runs[1].ID, []byte("v1\nv2\nv3\n"), nil)
 	e.FocusPanel("tags")
 	e.Move(1) // v2
-	e.Finished(e.Refresh()[0].ID, []byte("v0\nv1\nv2\nv3\n"), nil)
+	e.Finished(e.Refresh().Runs[0].ID, []byte("v0\nv1\nv2\nv3\n"), nil)
 	if c := e.View("tags").Cursor; c != 2 {
 		t.Errorf("cursor = %d, want 2 (v2)", c)
 	}
-	e.Finished(e.Refresh()[0].ID, []byte("v9\n"), nil)
+	e.Finished(e.Refresh().Runs[0].ID, []byte("v9\n"), nil)
 	if c := e.View("tags").Cursor; c != 0 {
 		t.Errorf("cursor = %d, want 0 when key gone", c)
 	}
@@ -175,7 +175,7 @@ context:
   region: {values: [eu, us]}
 `
 	e := New(mustDef(t, src), nil)
-	runs := e.Start()
+	runs := e.Start().Runs
 	out := []byte(`[{"name":"web","run":1,"want":2},{"name":"api","run":3,"want":3}]`)
 	e.Finished(runs[0].ID, out, nil)
 	e.Finished(runs[1].ID, out, nil)
@@ -199,7 +199,7 @@ panels:
   - {id: a, source: "aws --profile {{ctx.profile}}"}
 `
 	e := New(mustDef(t, src), map[string]string{"region": "us-east-1"})
-	run := e.Start()[0]
+	run := e.Start().Runs[0]
 	if run.Req.Cmd != "aws --profile prod" {
 		t.Errorf("cmd = %q", run.Req.Cmd)
 	}
@@ -224,7 +224,7 @@ func TestSelection(t *testing.T) {
 	if _, ok := e.Selection("branches"); ok {
 		t.Error("selection before rows")
 	}
-	e.Finished(e.Start()[0].ID, []byte("a\nb\n"), nil)
+	e.Finished(e.Start().Runs[0].ID, []byte("a\nb\n"), nil)
 	e.Move(1)
 	sel, ok := e.Selection("branches")
 	if !ok || !reflect.DeepEqual(sel, map[string]any{"line": "b"}) {

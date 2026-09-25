@@ -1,11 +1,17 @@
 // Package engine is lazify's state machine: panels, selections and which
-// commands to run. It does no I/O — callers execute the returned Runs and
-// report back with Finished — so it is tested without a shell or a TUI.
+// commands to run. It does no I/O — callers carry out the returned Effects and
+// report back with Finished and Settle — so it is tested without a shell or a TUI.
+//
+// Reactivity: a panel whose source references other panels re-renders its
+// command whenever their selections change. Results are cached by rendered
+// command, so revisiting a selection is instant; cache misses caused by cursor
+// movement run only after the caller waits Debounce and calls Settle.
 package engine
 
 import (
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/martinhrvn/lazify/internal/def"
 	"github.com/martinhrvn/lazify/internal/rows"
@@ -13,11 +19,21 @@ import (
 	"github.com/martinhrvn/lazify/internal/tmpl"
 )
 
+// Debounce is how long callers should wait after a Settle request.
+const Debounce = 150 * time.Millisecond
+
 // Run asks the caller to execute a command and report it via Finished(ID, ...).
 type Run struct {
 	ID    uint64
 	Panel string
 	Req   runner.Request
+}
+
+// Effects is what the caller must do after an engine call.
+type Effects struct {
+	Runs   []Run
+	Cancel []uint64 // runs whose results are no longer wanted; kill them
+	Settle uint64   // non-zero: call Settle(Settle) after Debounce
 }
 
 // PanelView is what the UI needs to draw a panel.
@@ -29,16 +45,19 @@ type PanelView struct {
 	Columns [][]string // per row, rendered column values
 	Cursor  int
 	Loading bool
-	Stale   bool   // rows shown are from a previous run
+	Stale   bool   // rows shown are not (yet) for the current selection
 	Err     string // last run's error
-	Blocked string // why the panel cannot run yet
+	Blocked string // why the panel cannot run
 }
 
 type panelState struct {
 	def     *def.Panel
 	rows    []rows.Row
 	cursor  int
+	cmd     string // command that produced rows ("" = none)
 	runID   uint64 // in-flight run; 0 = none
+	runCmd  string // command of the in-flight run
+	pending bool   // needs a run once its inputs settle / the debounce ends
 	stale   bool
 	err     string
 	blocked string
@@ -50,13 +69,23 @@ type Engine struct {
 	ctx    map[string]string
 	env    map[string]string
 	panels map[string]*panelState
-	focus  int // index into TopLevel()
-	nextID uint64
+	// cache maps a rendered command to its rows. The env is fixed for the
+	// engine's lifetime, so the command alone is the key.
+	cache    map[string][]rows.Row
+	focus    int // index into TopLevel()
+	nextID   uint64
+	settleID uint64
+	fx       Effects // accumulated by the current call
 }
 
 // New creates an engine. ctx overrides context defaults (e.g. from --set).
 func New(d *def.Definition, ctx map[string]string) *Engine {
-	e := &Engine{def: d, ctx: map[string]string{}, panels: map[string]*panelState{}}
+	e := &Engine{
+		def:    d,
+		ctx:    map[string]string{},
+		panels: map[string]*panelState{},
+		cache:  map[string][]rows.Row{},
+	}
 	for name, cv := range d.Context {
 		e.ctx[name] = cv.Default
 	}
@@ -71,64 +100,187 @@ func New(d *def.Definition, ctx map[string]string) *Engine {
 	return e
 }
 
-// Start returns the runs for every panel that can run without a selection.
-func (e *Engine) Start() []Run {
-	var runs []Run
-	for _, id := range e.def.Order {
-		if r, ok := e.run(e.panels[id]); ok {
-			runs = append(runs, r)
-		}
-	}
-	return runs
+// take returns and resets the effects accumulated by the current call.
+func (e *Engine) take() Effects {
+	fx := e.fx
+	e.fx = Effects{}
+	return fx
 }
 
-// run renders a panel's source and marks it loading; ok=false if it is blocked.
-func (e *Engine) run(ps *panelState) (Run, bool) {
-	for _, dep := range ps.def.Deps {
-		if _, ok := e.selection(dep); !ok {
-			ps.blocked = "no selection in " + dep
-			return Run{}, false
-		}
+// Start runs every panel that can run; the rest wait for their inputs.
+func (e *Engine) Start() Effects {
+	for _, id := range e.def.Order {
+		e.evaluate(e.panels[id], true)
 	}
-	ps.blocked = ""
-	cmd, err := ps.def.Source.Render(e.resolver(nil), tmpl.Shell)
-	if err != nil {
-		ps.err = err.Error()
-		return Run{}, false
-	}
-	e.nextID++
-	ps.runID = e.nextID
-	ps.stale = len(ps.rows) > 0
-	return Run{
-		ID:    ps.runID,
-		Panel: ps.def.ID,
-		Req:   runner.Request{Cmd: cmd, Env: e.env, Timeout: e.def.Timeout},
-	}, true
+	return e.take()
 }
 
 // Finished applies a run's result. Results of superseded runs are ignored.
-func (e *Engine) Finished(id uint64, stdout []byte, runErr error) []Run {
+func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
 	var ps *panelState
 	for _, p := range e.panels {
-		if p.runID == id && id != 0 {
+		if id != 0 && p.runID == id {
 			ps = p
 		}
 	}
 	if ps == nil {
-		return nil
+		return e.take()
 	}
-	ps.runID = 0
+	cmd := ps.runCmd
+	ps.runID, ps.runCmd = 0, ""
 	if runErr != nil {
 		ps.err = runErr.Error()
-		return nil
-	}
-	parsed, err := ps.def.Parser.Parse(stdout)
-	if err != nil {
+	} else if parsed, err := ps.def.Parser.Parse(stdout); err != nil {
 		ps.err = err.Error()
-		return nil
+	} else {
+		e.cache[cmd] = parsed
+		e.setRows(ps, cmd, parsed)
 	}
+	e.propagate(ps.def.ID, true)
+	return e.take()
+}
+
+// Settle runs what cursor movement left pending, unless a newer move superseded it.
+func (e *Engine) Settle(id uint64) Effects {
+	if id == 0 || id != e.settleID {
+		return e.take()
+	}
+	for _, pid := range e.def.Order {
+		e.evaluate(e.panels[pid], true)
+	}
+	return e.take()
+}
+
+// Move moves the focused panel's cursor by delta, clamped to its rows.
+// Dependents are served from the cache at once; misses wait for Settle.
+func (e *Engine) Move(delta int) Effects {
+	ps := e.panels[e.Focused()]
+	if len(ps.rows) == 0 {
+		return e.take()
+	}
+	cursor := max(0, min(len(ps.rows)-1, ps.cursor+delta))
+	if cursor == ps.cursor {
+		return e.take()
+	}
+	ps.cursor = cursor
+	if len(e.def.Dependents(ps.def.ID)) > 0 {
+		e.propagate(ps.def.ID, false)
+		e.settleID++
+		e.fx.Settle = e.settleID
+	}
+	return e.take()
+}
+
+// Refresh re-runs the focused panel, bypassing the cache.
+func (e *Engine) Refresh() Effects {
+	ps := e.panels[e.Focused()]
+	if ps.blocked != "" || ps.pending {
+		return e.take()
+	}
+	if cmd, ok := e.render(ps); ok {
+		e.start(ps, cmd)
+	}
+	return e.take()
+}
+
+// propagate re-evaluates every panel downstream of id, in dependency order.
+func (e *Engine) propagate(id string, run bool) {
+	down := map[string]bool{id: true}
+	for _, pid := range e.def.Order {
+		if down[pid] {
+			continue
+		}
+		p := e.panels[pid]
+		if slices.ContainsFunc(p.def.Deps, func(d string) bool { return down[d] }) {
+			down[pid] = true
+			e.evaluate(p, run)
+		}
+	}
+}
+
+// evaluate brings one panel up to date with its inputs' selections. With
+// run=false, cache misses are left pending instead of started.
+func (e *Engine) evaluate(ps *panelState, run bool) {
+	if ps.def.Parent != "" {
+		return // drill-in children run only when opened
+	}
+	for _, dep := range ps.def.Deps {
+		d := e.panels[dep]
+		if d.runID != 0 || d.pending {
+			e.cancel(ps)
+			ps.pending, ps.blocked = true, ""
+			ps.stale = len(ps.rows) > 0
+			return
+		}
+		if _, ok := e.selection(dep); !ok {
+			e.cancel(ps)
+			*ps = panelState{def: ps.def, blocked: "no selection in " + dep}
+			return
+		}
+	}
+	ps.blocked = ""
+	cmd, ok := e.render(ps)
+	if !ok {
+		return
+	}
+	switch {
+	case ps.runID != 0 && ps.runCmd == cmd:
+		return // already running it
+	case ps.cmd == cmd && ps.cmd != "":
+		e.cancel(ps)
+		ps.pending, ps.stale = false, false
+		return
+	}
+	e.cancel(ps)
+	if cached, ok := e.cache[cmd]; ok {
+		ps.pending = false
+		e.setRows(ps, cmd, cached)
+		return
+	}
+	if !run {
+		ps.pending = true
+		ps.stale = len(ps.rows) > 0
+		return
+	}
+	e.start(ps, cmd)
+}
+
+// render renders a panel's source; a failure is recorded as the panel's error.
+func (e *Engine) render(ps *panelState) (string, bool) {
+	cmd, err := ps.def.Source.Render(e.resolver(nil), tmpl.Shell)
+	if err != nil {
+		e.cancel(ps)
+		ps.pending, ps.err = false, err.Error()
+		return "", false
+	}
+	return cmd, true
+}
+
+// start begins running cmd for ps, replacing any in-flight run.
+func (e *Engine) start(ps *panelState, cmd string) {
+	e.cancel(ps)
+	e.nextID++
+	ps.runID, ps.runCmd, ps.pending = e.nextID, cmd, false
+	ps.stale = len(ps.rows) > 0
+	e.fx.Runs = append(e.fx.Runs, Run{
+		ID:    ps.runID,
+		Panel: ps.def.ID,
+		Req:   runner.Request{Cmd: cmd, Env: e.env, Timeout: e.def.Timeout},
+	})
+}
+
+// cancel drops ps's in-flight run, if any.
+func (e *Engine) cancel(ps *panelState) {
+	if ps.runID != 0 {
+		e.fx.Cancel = append(e.fx.Cancel, ps.runID)
+		ps.runID, ps.runCmd = 0, ""
+	}
+}
+
+// setRows shows rows produced by cmd, keeping the cursor on the same key.
+func (e *Engine) setRows(ps *panelState, cmd string, rs []rows.Row) {
 	prevKey, hadPrev := e.rowKey(ps, ps.cursor)
-	ps.rows, ps.err, ps.stale, ps.cursor = parsed, "", false, 0
+	ps.rows, ps.cmd, ps.err, ps.stale, ps.cursor = rs, cmd, "", false, 0
 	if hadPrev {
 		for i := range ps.rows {
 			if k, _ := e.rowKey(ps, i); k == prevKey {
@@ -137,7 +289,6 @@ func (e *Engine) Finished(id uint64, stdout []byte, runErr error) []Run {
 			}
 		}
 	}
-	return nil
 }
 
 // rowKey is the stable identity of row i: its key path, else its label.
@@ -167,24 +318,6 @@ func (e *Engine) selection(id string) (rows.Row, bool) {
 		return nil, false
 	}
 	return ps.rows[ps.cursor], true
-}
-
-// Move moves the focused panel's cursor by delta, clamped to its rows.
-func (e *Engine) Move(delta int) []Run {
-	ps := e.panels[e.Focused()]
-	if len(ps.rows) == 0 {
-		return nil
-	}
-	ps.cursor = max(0, min(len(ps.rows)-1, ps.cursor+delta))
-	return nil
-}
-
-// Refresh re-runs the focused panel.
-func (e *Engine) Refresh() []Run {
-	if r, ok := e.run(e.panels[e.Focused()]); ok {
-		return []Run{r}
-	}
-	return nil
 }
 
 // TopLevel lists the panels that own a slot (not drill-in children) in visual
@@ -229,7 +362,7 @@ func (e *Engine) View(id string) PanelView {
 		ID:      id,
 		Title:   ps.def.Title,
 		Cursor:  ps.cursor,
-		Loading: ps.runID != 0,
+		Loading: ps.runID != 0 || ps.pending,
 		Stale:   ps.stale,
 		Err:     ps.err,
 		Blocked: ps.blocked,
