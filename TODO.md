@@ -69,7 +69,7 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `tab_of: <panel>` puts list panels in one slot; the slot title is a tab bar
 - [x] `[`/`]` switch the focused slot's panel tabs (focus + active follow), else content tabs
 - [x] drill-down stacks per tab; the active tab is remembered per slot
-- [ ] later: load hidden tabs lazily (all tabs run today)
+- [x] hidden tabs are lazy: a panel runs when shown, or when something on screen (or the env) reads it
 
 ## Select panels (context) ✅
 - [x] `select: true` list panels: show their chosen row; number/Enter opens a picker; Enter commits, Esc cancels
@@ -89,7 +89,8 @@ See `docs/design.md` §11 for milestone scope.
 ## M5 ✅ — auto-refresh (columns, context as select panels, filter: done earlier)
 - [x] `refresh: <interval>` re-runs a panel while it's on screen and idle; quiet, cursor kept by key
 - [x] minimum 1s; timers live in the UI (`refreshMsg`), the engine decides (`AutoRefresh`)
-- [ ] later: pause refreshing while the terminal is unfocused; per-content-tab refresh
+- [x] auto-refresh pauses while the terminal is unfocused (focus reporting); on focus, missed panels re-run at once
+- [ ] later: per-content-tab refresh
 ## Small additions ✅
 - [x] `default:` (and `--set id=row`) picks the starting row of any list panel, not only selects
 - [x] `enter: {focus: <panel>|next}` makes Enter move focus instead of opening something

@@ -59,6 +59,8 @@ type Model struct {
 	spinning    bool                                      // a spinner tick is scheduled
 	regions     *[]region                                 // where View drew each box, for mouse hit-testing
 	form        *optionsForm                              // the open options form (modalOptions)
+	unfocused   bool                                      // the terminal lost focus: auto-refresh pauses
+	missed      map[string]bool                           // panels whose refresh fell while unfocused
 	width       int
 	height      int
 }
@@ -81,6 +83,7 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		streams:     map[uint64]<-chan streamEvent{},
 		vps:         map[string]*viewport{},
 		vpIDs:       map[string]string{},
+		missed:      map[string]bool{},
 		regions:     &[]region{},
 		debounce:    engine.Debounce,
 		toastTTL:    3 * time.Second,
@@ -166,7 +169,21 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case redrawMsg: // relative times ("3m ago") move on even when nothing else happens
 		return m, m.every(redrawEvery, redrawMsg{})
 	case refreshMsg: // re-run the panel if it's on screen and idle, then wait again
+		if m.unfocused { // nobody is looking: note it, catch up on focus
+			m.missed[msg.id] = true
+			return m, m.every(msg.every, msg)
+		}
 		return m, tea.Batch(m.apply(m.eng.AutoRefresh(msg.id)), m.every(msg.every, msg))
+	case tea.BlurMsg:
+		m.unfocused = true
+	case tea.FocusMsg:
+		m.unfocused = false
+		var cmds []tea.Cmd
+		for id := range m.missed {
+			cmds = append(cmds, m.apply(m.eng.AutoRefresh(id)))
+		}
+		clear(m.missed)
+		return m, tea.Batch(cmds...)
 	case streamMsg:
 		m.eng.StreamData(msg.id, msg.data)
 		if msg.done {

@@ -18,7 +18,6 @@ panels:
 func loadedRefresh(t *testing.T) *harness {
 	h := newHarness(t, refreshDef)
 	h.finish("services", "api\nweb\n")
-	h.finish("hidden", "x\n")
 	h.finish("other", "o\n")
 	h.finish("tasks", "t1\n")
 	return h

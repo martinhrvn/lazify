@@ -137,6 +137,7 @@ func (e *Engine) shiftTab(delta int) Effects {
 	if slot := e.slot(); len(e.popups) == 0 && len(e.Tabs(slot)) > 1 {
 		n := len(e.Tabs(slot))
 		e.slotTab[slot] = ((e.slotTab[slot]+delta)%n + n) % n
+		e.wake()
 		if f := e.Focused(); !e.IsContent(f) {
 			e.active = f
 		}

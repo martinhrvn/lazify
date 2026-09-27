@@ -336,7 +336,7 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 		e.initialChoice(ps)
 		return
 	}
-	if !run {
+	if !run || !e.isNeeded(ps.def.ID) { // a hidden tab waits until shown (lazy.go)
 		ps.pending = true
 		ps.stale = len(ps.rows) > 0
 		return
@@ -471,6 +471,7 @@ func (e *Engine) setFocus(i int) Effects {
 	}
 	n := len(e.TopLevel())
 	e.focus = ((i % n) + n) % n
+	e.wake() // a tab shown by focusing it (FocusPanel) runs now
 	if id := e.Focused(); !e.IsContent(id) && !e.IsSelect(id) {
 		e.active = id // selects are chosen in a picker; they never drive content
 	}

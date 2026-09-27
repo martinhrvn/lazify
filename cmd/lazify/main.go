@@ -73,7 +73,8 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		fmt.Fprintln(stderr, "lazify:", err)
 		return 2
 	}
-	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	// Focus reports pause auto-refresh while the terminal is in the background.
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus()}
 	if !a.noMouse {
 		// Clicks and the wheel go to lazify; most terminals still select text
 		// with shift+drag (or run with --no-mouse).

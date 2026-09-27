@@ -22,8 +22,6 @@ panels:
 func loadedTabs(t *testing.T) *harness {
 	h := newHarness(t, tabsDef)
 	h.finish("branches", "main\n")
-	h.finish("remotes", "origin/main\n")
-	h.finish("tags", "v1\n")
 	h.finish("files", "a\n")
 	h.finish("main", "log main\n")
 	return h
@@ -31,10 +29,13 @@ func loadedTabs(t *testing.T) *harness {
 
 func TestTabsRunAndShareASlot(t *testing.T) {
 	h := newHarness(t, tabsDef)
-	for _, p := range []string{"branches", "remotes", "tags"} {
-		if _, ok := h.inflight[p]; !ok {
-			t.Errorf("%s should run at start (hidden tabs run too)", p)
+	for _, p := range []string{"remotes", "tags"} {
+		if _, ok := h.inflight[p]; ok {
+			t.Errorf("%s is a hidden tab: it runs when shown", p)
 		}
+	}
+	if _, ok := h.inflight["branches"]; !ok {
+		t.Error("branches (shown) should run at start")
 	}
 	if got := h.e.TopLevel(); !reflect.DeepEqual(got, []string{"branches", "files", "main"}) {
 		t.Errorf("top level = %v", got)
@@ -47,10 +48,12 @@ func TestTabsRunAndShareASlot(t *testing.T) {
 func TestSwitchPanelTabs(t *testing.T) {
 	h := loadedTabs(t)
 	h.apply(h.e.NextTab())
+	h.finish("remotes", "origin/main\n") // shown: runs now
 	if h.e.Focused() != "remotes" || h.e.ActiveTab("branches") != "remotes" {
 		t.Errorf("after ]: focused %q", h.e.Focused())
 	}
 	h.apply(h.e.NextTab())
+	h.finish("tags", "v1\n")
 	if h.e.Focused() != "tags" {
 		t.Errorf("focused %q", h.e.Focused())
 	}
@@ -95,6 +98,7 @@ func TestContentTabsStillSwitchWhenContentFocused(t *testing.T) {
 func TestDrillDownIsPerTab(t *testing.T) {
 	h := loadedTabs(t)
 	h.apply(h.e.NextTab()) // remotes
+	h.finish("remotes", "origin/main\n")
 	h.enter()
 	if got := h.cmd("rcommits"); got != "git log origin/main" {
 		t.Fatalf("rcommits = %q", got)
