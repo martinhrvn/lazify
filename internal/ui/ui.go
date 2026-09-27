@@ -401,7 +401,9 @@ func (m Model) panelLines(id string, w, h int) []string {
 
 // listLines renders a list view; focused shows the cursor.
 func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
-	var head, rows []string
+	var head []string
+	var n int                  // rows
+	var row func(i int) string // row i, drawn
 	switch {
 	case v.Blocked != "":
 		return []string{styleDim.Render(v.Blocked)}
@@ -440,36 +442,48 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		return ""
 	}
 	if len(v.Headers) > 0 {
-		// Decorate first, so column widths account for icons.
-		cells := make([][]string, len(v.Columns))
+		// Widths from every row (so they don't jump while scrolling), but only
+		// the rows on screen are drawn.
+		cellDeco := func(i, j int) def.Deco {
+			if i < len(v.CellDeco) && j < len(v.CellDeco[i]) {
+				return v.CellDeco[i][j]
+			}
+			return def.Deco{}
+		}
+		widths := make([]int, len(v.Headers))
+		for j, hd := range v.Headers {
+			widths[j] = ansi.StringWidth(hd)
+		}
 		for i, row := range v.Columns {
-			cells[i] = make([]string, len(row))
 			for j, c := range row {
-				if i < len(v.CellDeco) && j < len(v.CellDeco[i]) {
-					c = decorate(c, v.CellDeco[i][j], m.frame)
-				}
-				cells[i][j] = c
+				widths[j] = max(widths[j], ansi.StringWidth(withHelper(c, cellDeco(i, j), m.frame)))
 			}
 		}
-		widths := columnWidths(v.Headers, cells)
 		head = append(head, styleHeader.Render(gutter(-1)+rowHelper(-1)+alignRow(v.Headers, widths)))
-		for i, row := range cells {
-			rows = append(rows, gutter(i)+rowHelper(i)+alignRow(row, widths))
+		n = len(v.Columns)
+		row = func(i int) string {
+			cells := make([]string, len(v.Columns[i]))
+			for j, c := range v.Columns[i] {
+				cells[j] = decorate(c, cellDeco(i, j), m.frame)
+			}
+			return gutter(i) + rowHelper(i) + alignRow(cells, widths)
 		}
 	} else {
-		for i, l := range v.Lines {
+		n = len(v.Lines)
+		row = func(i int) string {
+			l := v.Lines[i]
 			if i < len(v.LineDeco) {
 				l = decorate(l, v.LineDeco[i], m.frame)
 			}
-			rows = append(rows, gutter(i)+rowHelper(i)+l)
+			return gutter(i) + rowHelper(i) + l
 		}
 	}
 
 	avail := max(1, h-len(head))
 	offset := max(0, v.Cursor-avail+1)
 	out := head
-	for i := offset; i < len(rows) && i < offset+avail; i++ {
-		line := ansi.Truncate(rows[i], w, "…")
+	for i := offset; i < n && i < offset+avail; i++ {
+		line := ansi.Truncate(row(i), w, "…")
 		// within(): these styles span coloured cells without being cut short.
 		switch {
 		case i == v.Cursor && focused:
@@ -486,9 +500,9 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		out = append(out, line)
 	}
 	switch {
-	case len(rows) == 0 && v.Filter != "":
+	case n == 0 && v.Filter != "":
 		out = append(out, styleDim.Render("(no matches)"))
-	case len(rows) == 0 && v.Err == "" && !v.Loading:
+	case n == 0 && v.Err == "" && !v.Loading:
 		out = append(out, styleDim.Render("(empty)"))
 	}
 	return out

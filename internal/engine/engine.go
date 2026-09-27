@@ -73,6 +73,9 @@ type panelState struct {
 	filter  string // see filter.go
 	visible []int  // indexes of rows matching filter; nil = no filter
 
+	rendered    []renderedRow // the rows as last displayed; see renderedRows
+	renderedFor string
+
 	marks      map[string]bool // output lines of the mark command
 	markErr    string
 	markRunID  uint64
@@ -88,20 +91,21 @@ type Engine struct {
 	panels map[string]*panelState
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
-	cache    map[string][]rows.Row
-	views    map[string]*viewState      // per content panel
-	tabIdx   map[string]int             // active tab per (content panel, entry)
-	active   string                     // last focused list panel: what content panels show
-	dcache   map[string][]string        // once-tab output by rendered command
-	mcache   map[string]map[string]bool // mark command output by rendered command
-	focus    int                        // index into TopLevel(): the focused slot
-	stacks   map[string][]string        // per slot: panels entered with Enter (drill down)
-	popups   []popupLevel               // open popups, innermost last
-	slotTab  map[string]int             // active panel tab per slot (index into def.Tabs)
-	nextID   uint64
-	settleID uint64
-	fx       Effects          // accumulated by the current call
-	now      func() time.Time // for the ago formatter; swapped in tests
+	cache      map[string][]rows.Row
+	views      map[string]*viewState      // per content panel
+	tabIdx     map[string]int             // active tab per (content panel, entry)
+	active     string                     // last focused list panel: what content panels show
+	dcache     map[string][]string        // once-tab output by rendered command
+	mcache     map[string]map[string]bool // mark command output by rendered command
+	focus      int                        // index into TopLevel(): the focused slot
+	stacks     map[string][]string        // per slot: panels entered with Enter (drill down)
+	popups     []popupLevel               // open popups, innermost last
+	slotTab    map[string]int             // active panel tab per slot (index into def.Tabs)
+	nextID     uint64
+	settleID   uint64
+	fx         Effects          // accumulated by the current call
+	now        func() time.Time // for the ago formatter; swapped in tests
+	rowRenders int              // rows rendered so far (tests check the cache)
 }
 
 // New creates an engine. set holds initial choices for select panels (--set).
@@ -368,6 +372,7 @@ func (e *Engine) cancel(ps *panelState) {
 func (e *Engine) setRows(ps *panelState, cmd string, rs []rows.Row) {
 	prevKey, hadPrev := e.rowKey(ps, ps.cursor)
 	ps.rows, ps.cmd, ps.err, ps.stale, ps.cursor = rs, cmd, "", false, 0
+	ps.rendered = nil
 	if hadPrev {
 		for i := range ps.rows {
 			if k, _ := e.rowKey(ps, i); k == prevKey {
@@ -487,8 +492,7 @@ func (e *Engine) view(id string, list bool) PanelView {
 	for _, c := range ps.def.Columns {
 		v.Headers = append(v.Headers, c.Title)
 	}
-	for _, row := range ps.rows {
-		rr := e.renderRow(ps, row)
+	for _, rr := range e.renderedRows(ps) {
 		if len(ps.def.Columns) > 0 {
 			v.Columns = append(v.Columns, rr.cells)
 			v.CellDeco = append(v.CellDeco, rr.cellDeco)

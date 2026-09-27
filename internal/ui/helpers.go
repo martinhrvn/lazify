@@ -43,18 +43,25 @@ func decoStyle(d def.Deco) (lipgloss.Style, bool) {
 // decorate renders text with its decoration: a helper (icon or spinner frame)
 // in front, unless text is hidden, and the colour.
 func decorate(text string, d def.Deco, frame int) string {
+	text = withHelper(text, d, frame)
+	if st, ok := decoStyle(d); ok {
+		return st.Render(text)
+	}
+	return text
+}
+
+// withHelper is text with its decoration's helper (icon or spinner frame) but
+// no colour: what decorate draws, and how wide it is.
+func withHelper(text string, d def.Deco, frame int) string {
 	helper := icons[d.Icon]
 	if d.Spinner {
 		helper = spinnerFrames[frame%len(spinnerFrames)]
 	}
 	switch {
 	case helper != "" && d.HideText:
-		text = helper
+		return helper
 	case helper != "":
-		text = helper + " " + text
-	}
-	if st, ok := decoStyle(d); ok {
-		return st.Render(text)
+		return helper + " " + text
 	}
 	return text
 }
@@ -103,11 +110,7 @@ func (m Model) spinnerShown() bool {
 		if v.Loading && len(v.Lines)+len(v.Columns) == 0 {
 			return true
 		}
-		cells := v.LineDeco
-		for _, row := range v.CellDeco {
-			cells = append(slices.Clone(cells), row...)
-		}
-		if hasSpinner(cells, v.RowDeco) {
+		if hasSpinner(v.LineDeco, v.RowDeco) || slices.ContainsFunc(v.CellDeco, func(row []def.Deco) bool { return hasSpinner(row) }) {
 			return true
 		}
 	}
