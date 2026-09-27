@@ -21,6 +21,7 @@ import (
 )
 
 const usage = `usage:
+  lazify                                 run the project's .lazify.yaml (here or in a parent dir)
   lazify <id> [--set panel=row]...      run the app with that id from %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   --no-mouse                             leave the mouse to the terminal (text selection)
@@ -57,25 +58,35 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		return runner.RunPager(argv[1], argv[2], stdout, stderr)
 	}
 	a, err := parseArgs(argv)
-	if err != nil || len(a.positional) == 0 {
-		if err != nil {
-			fmt.Fprintln(stderr, "lazify:", err)
-		}
+	if err != nil {
+		fmt.Fprintln(stderr, "lazify:", err)
 		fmt.Fprintf(stderr, usage, cfgDir, state.Dir())
 		return 2
 	}
-
-	switch a.positional[0] {
-	case "lint":
-		return lint(a.positional[1:], stdout, stderr, cfgDir)
-	case "list":
-		return list(stdout, cfgDir)
+	cwd, _ := os.Getwd()
+	if len(a.positional) > 0 {
+		switch a.positional[0] {
+		case "lint":
+			return lint(a.positional[1:], stdout, stderr, cfgDir, cwd)
+		case "list":
+			return list(stdout, cfgDir, cwd)
+		}
 	}
 
-	d, err := pick(a.positional, cfgDir)
-	if err != nil {
+	d, dir, err := resolve(a.positional, cfgDir, cwd)
+	switch {
+	case err == errNoApp:
+		fmt.Fprintf(stderr, usage, cfgDir, state.Dir())
+		return 2
+	case err != nil:
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if dir != "" { // a project's app runs from the project
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintln(stderr, "lazify:", err)
+			return 1
+		}
 	}
 	if err := checkSet(d, a.set); err != nil {
 		fmt.Fprintln(stderr, "lazify:", err)
@@ -177,8 +188,9 @@ func pick(args []string, cfgDir string) (*def.Definition, error) {
 	return nil, fmt.Errorf("%s defines %d apps (%s); run `lazify %s <id>`", file, len(apps), strings.Join(ids, ", "), file)
 }
 
-// lint validates the given apps or files, or everything in the config dir.
-func lint(targets []string, stdout, stderr io.Writer, cfgDir string) int {
+// lint validates the given apps or files; with none, everything in the config
+// dir and the project's .lazify.yaml (in cwd or above).
+func lint(targets []string, stdout, stderr io.Writer, cfgDir, cwd string) int {
 	code := 0
 	report := func(what string, err error) {
 		if err != nil {
@@ -197,6 +209,9 @@ func lint(targets []string, stdout, stderr io.Writer, cfgDir string) int {
 		}
 		for _, p := range c.Problems() {
 			report("", p)
+		}
+		if file, ok := catalog.FindProject(cwd); ok {
+			code = max(code, lint([]string{file}, stdout, stderr, cfgDir, ""))
 		}
 		return code
 	}
@@ -223,13 +238,30 @@ func lint(targets []string, stdout, stderr io.Writer, cfgDir string) int {
 }
 
 // list prints the catalog as a table.
-func list(stdout io.Writer, cfgDir string) int {
+// list prints the apps in the config dir and the project's (cwd or above).
+func list(stdout io.Writer, cfgDir, cwd string) int {
 	c := catalog.Scan(cfgDir)
-	if len(c.Entries()) == 0 {
+	project, hasProject := catalog.FindProject(cwd)
+	if len(c.Entries()) == 0 && !hasProject {
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tNAME\tFILE\t")
+	if hasProject { // plain `lazify` runs it
+		loc := project
+		if rel, err := filepath.Rel(cwd, project); err == nil {
+			loc = rel
+		}
+		data, err := os.ReadFile(project)
+		apps, perr := def.ParseFile(data, project)
+		for _, app := range apps {
+			status := "project"
+			if app.Err != nil || err != nil || perr != nil {
+				status = "project, invalid (lazify lint)"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s:%d\t%s\n", app.ID, app.Name, loc, app.Line, status)
+		}
+	}
 	for _, e := range c.Entries() {
 		status := ""
 		switch {
@@ -310,4 +342,23 @@ func checkSet(d *def.Definition, set map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// errNoApp: nothing to run — no arguments and no project definition here.
+var errNoApp = errors.New("no app given and no .lazify.yaml here or above")
+
+// resolve finds the app to run: by id or file, or with no arguments the
+// project's .lazify.yaml in cwd or above. dir is where it should run: the
+// project's directory, "" for the current one.
+func resolve(args []string, cfgDir, cwd string) (d *def.Definition, dir string, err error) {
+	if len(args) > 0 {
+		d, err = pick(args, cfgDir)
+		return d, "", err
+	}
+	file, ok := catalog.FindProject(cwd)
+	if !ok {
+		return nil, "", errNoApp
+	}
+	d, err = pick([]string{file}, cfgDir)
+	return d, filepath.Dir(file), err
 }

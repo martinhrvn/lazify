@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -19,6 +20,11 @@ type App struct {
 	Def  *Definition // nil when Err is set
 	Err  error       // this app's validation errors (Errors)
 }
+
+// ProjectFiles are the names of a project's own definition, found by running
+// plain `lazify` in the project (or below it); its app is named after the
+// project directory unless it has an id.
+var ProjectFiles = []string{".lazify.yaml", ".lazify.yml"}
 
 // rawFile is a file with one app at the top level, or several under apps.
 type rawFile struct {
@@ -52,6 +58,9 @@ func ParseFile(data []byte, file string) ([]App, error) {
 	appsNode := mapValue(root, "apps")
 	if appsNode == nil {
 		stem := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+		if slices.Contains(ProjectFiles, filepath.Base(file)) { // a project's file: named after the project
+			stem = filepath.Base(filepath.Dir(file))
+		}
 		app := buildApp(file, root, &raw.rawDef, typeErrs, stem)
 		return []App{app}, nil
 	}

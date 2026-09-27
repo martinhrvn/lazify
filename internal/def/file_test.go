@@ -129,3 +129,17 @@ func TestConfigExample(t *testing.T) {
 		t.Errorf("ids = %v", got)
 	}
 }
+
+// A project's .lazify.yaml is named after its directory, not ".lazify".
+func TestProjectFileID(t *testing.T) {
+	for _, name := range []string{".lazify.yaml", ".lazify.yml"} {
+		apps, err := ParseFile([]byte("panels: [{id: a, source: x}]"), "/home/me/proj/shop/"+name)
+		if err != nil || len(apps) != 1 || apps[0].ID != "shop" {
+			t.Errorf("%s: apps %+v, %v", name, apps, err)
+		}
+	}
+	apps, _ := ParseFile([]byte("id: dev\npanels: [{id: a, source: x}]"), "/p/shop/.lazify.yaml")
+	if apps[0].ID != "dev" {
+		t.Errorf("an explicit id wins: %q", apps[0].ID)
+	}
+}

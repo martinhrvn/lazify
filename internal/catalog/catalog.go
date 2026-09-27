@@ -137,3 +137,25 @@ func (c *Catalog) Problems() []error {
 	}
 	return probs
 }
+
+// FindProject looks for a project definition (def.ProjectFiles) in dir and
+// then its parents; the nearest wins.
+func FindProject(dir string) (string, bool) {
+	for {
+		for _, name := range def.ProjectFiles {
+			if p := filepath.Join(dir, name); fileExists(p) {
+				return p, true
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}

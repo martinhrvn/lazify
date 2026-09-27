@@ -1,0 +1,71 @@
+name: dev
+# A project dashboard over process-compose: the services in process-compose.yaml
+# (next to this file) with status and health, live logs, start/stop/restart.
+# process-compose runs them in the background, so they outlive lazify; U / D
+# bring the whole project up / down. Copy this file into a project that has a
+# process-compose.yaml and run plain `lazify` there.
+env:
+  PC_SOCKET_PATH: .process-compose.sock # a unix socket per project: no port clashes
+
+panels:
+  - id: services
+    title: Services
+    source: process-compose process list -o json 2>/dev/null || echo '[]' # [] while the project is down
+    rows: .[]
+    key: .name
+    refresh: 2s
+    remember: true
+    columns:
+      - { title: Service, value: "{{.name}}" }
+      - title: Status
+        value: "{{.status}}"
+        style:
+          Running: { icon: check, color: ok }
+          Completed: { icon: dot, color: dim }
+          Error: { icon: cross, color: error }
+          Disabled: dim
+          "*": { spinner: true, color: warn } # Pending, Launching, Restarting, Terminating…
+      - { title: Health, value: "{{.is_ready}}", style: { Ready: ok, "Not Ready": error, "*": dim } }
+      - { title: Restarts, value: "{{.restarts}}", style: { "0": dim, "*": warn } }
+      - { title: Up, value: "{{.process_start_time}}", format: ago }
+      - { title: Mem, value: "{{.mem}}", format: bytes }
+    actions:
+      - { key: s, desc: Start, cmd: "process-compose process start {{.name}}" }
+      - { key: x, desc: Stop, cmd: "process-compose process stop {{.name}}" }
+      - { key: R, desc: Restart, cmd: "process-compose process restart {{.name}}" }
+      - { key: f, desc: Follow logs, cmd: "process-compose process logs {{.name}} -f -n 1000 2>/dev/null", pager: true }
+
+  - id: project
+    title: Project
+    size: fit
+    # "up 2m7s · 2/3 running", or "down" (U starts it)
+    source: |
+      process-compose project state 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' |
+      awk -F': *' '/^Up Time/ {u=$2} /^Running Processes/ {r=$2} /^Processes/ {p=$2}
+        END { if (u == "") print "down · U starts the project"; else print "up " u " · " r "/" p " running" }'
+    split: " "
+    label: "{{.line}}"
+    style: { value: "{{.fields.0}}", map: { up: ok, down: warn } }
+    refresh: 2s
+
+  - id: main
+    title: Logs
+    content:
+      services:
+        # process-compose logs its own debug chatter on stderr; the processes' output is on stdout
+        options: [{ id: lines, title: History, values: ["500", "5000", "50000"] }] # o
+        tabs:
+          - { name: Logs, mode: stream, cmd: "process-compose process logs {{.name}} -f -n {{opt.lines}} 2>/dev/null" }
+          - name: All
+            mode: stream
+            cmd: 'process-compose process logs "$(process-compose process list 2>/dev/null | paste -sd, -)" -f -n {{opt.lines}} 2>/dev/null'
+          - { name: Info, cmd: "process-compose process get {{.name}}; process-compose process ports {{.name}} 2>/dev/null" }
+          - { name: JSON, cmd: "echo {{.}}", format: json }
+      default:
+        tabs:
+          - { name: Config, cmd: "cat process-compose.yaml" }
+
+actions: # the whole project
+  - { key: U, desc: Up, cmd: process-compose up -D -U, refresh: [project, services] }
+  - { key: D, desc: Down, cmd: process-compose down, confirm: true, refresh: [project, services] }
+  - { key: a, desc: process-compose TUI, cmd: process-compose attach -U, mode: interactive }

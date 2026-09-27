@@ -58,7 +58,7 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `lazify <id>`, `lazify <file> [id]`, `lazify list` (table, invalid/duplicates marked), `lazify lint` (whole folder)
 - [x] a broken app or file never blocks the others; `file:line` errors inside `apps:`
 - [ ] later: global settings in config.yaml (theme, default layout, key overrides)
-- [ ] later: project-local definitions (e.g. `.lazify.yaml` in the current repo)
+- [x] project-local definitions: plain `lazify` runs the nearest `.lazify.yaml` from its directory (id = directory name)
 
 ## Enter on a row — popup or drill-down ✅
 - [x] `enter: <panel>` drills down in the same slot; `enter: {panel, popup: true|full|{width, height}}` opens a popup
@@ -111,5 +111,6 @@ See `docs/design.md` §11 for milestone scope.
 - [ ] later: themes (remap semantic colours, ASCII icons), more formatters as needed
 
 ## M6 — example definitions (git-lite, cloudwatch, ecs)
+- [x] dev (project dashboard over process-compose): services, health, logs, start/stop/restart, up/down
 - [x] nix (lazynix): generations (system/home tabs, nvd diffs), closure drill-down, flake inputs, GC roots; confirmed writes (update, upgrade, delete generation)
 - [ ] later (nix): garbage collect, switch/rollback to a generation, `nh` integration

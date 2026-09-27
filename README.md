@@ -18,6 +18,8 @@ lazify lint         # check every app
 
 Examples: `examples/git-lite.yaml` (git), `examples/ecs.yaml` (AWS ECS, read-only),
 `examples/nix.yaml` (NixOS generations, closures, flake inputs; `lazify examples/nix.yaml`).
+`examples/dev/`: a project dashboard over process-compose — copy its `.lazify.yaml` into a
+project with a `process-compose.yaml` and run plain `lazify` there.
 
 Choices (profile, region, flake, …) are remembered per app in `~/.local/state/lazify/<id>.yaml`;
 `--no-remember` starts fresh.

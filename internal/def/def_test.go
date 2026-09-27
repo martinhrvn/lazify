@@ -799,3 +799,24 @@ func TestLoadNixExample(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadDevExample(t *testing.T) {
+	d, err := Load("../../examples/dev/.lazify.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ID != "dev" || d.Panels[0].ID != "services" { // services first: focused at start
+		t.Errorf("id %q, first panel %q", d.ID, d.Panels[0].ID)
+	}
+	svc := d.Panel("services")
+	if svc.Refresh == 0 || !svc.Remember || d.Env["PC_SOCKET_PATH"] == nil {
+		t.Errorf("services refresh %v remember %v, env %v", svc.Refresh, svc.Remember, d.Env)
+	}
+	keys := map[string]*Action{}
+	for _, a := range append(slices.Clone(d.Actions), svc.Actions...) {
+		keys[a.Key] = a
+	}
+	if keys["D"] == nil || !keys["D"].Confirm || keys["U"] == nil || keys["f"] == nil || keys["f"].Pager == "" {
+		t.Errorf("want U, D (confirmed) and f (pager): %v", keys)
+	}
+}

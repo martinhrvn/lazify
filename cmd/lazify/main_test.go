@@ -71,6 +71,7 @@ func TestListMissingDirIsEmpty(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
+	t.Chdir(t.TempDir()) // no .lazify.yaml up the tree
 	var errOut bytes.Buffer
 	if code := run(nil, &bytes.Buffer{}, &errOut, t.TempDir()); code != 2 {
 		t.Errorf("code %d", code)
@@ -253,5 +254,48 @@ func TestNoFloatFlag(t *testing.T) {
 	a, err := parseArgs([]string{"ecs", "--no-float"})
 	if err != nil || !a.noFloat {
 		t.Errorf("args = %+v, %v", a, err)
+	}
+}
+
+func projectDir(t *testing.T) (root, sub string) {
+	t.Helper()
+	root = filepath.Join(t.TempDir(), "shop")
+	sub = filepath.Join(root, "web", "src")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDef(t, root, ".lazify.yaml", "panels: [{id: svc, source: process-compose list}]\n")
+	return root, sub
+}
+
+// Plain `lazify` in a project (or below it) runs its .lazify.yaml, from the
+// project's directory.
+func TestResolveProject(t *testing.T) {
+	root, sub := projectDir(t)
+	d, dir, err := resolve(nil, t.TempDir(), sub)
+	if err != nil || d.ID != "shop" || dir != root {
+		t.Errorf("resolve = %v, %q, %v", d, dir, err)
+	}
+	if _, _, err := resolve(nil, t.TempDir(), t.TempDir()); err != errNoApp {
+		t.Errorf("no project: %v", err)
+	}
+	// An explicit id or file still means the catalog / that file, run here.
+	cfg := t.TempDir()
+	writeDef(t, cfg, "git.yaml", validDef)
+	if d, dir, err := resolve([]string{"git"}, cfg, sub); err != nil || d.ID != "git" || dir != "" {
+		t.Errorf("by id: %v %q %v", d, dir, err)
+	}
+}
+
+func TestListAndLintIncludeProject(t *testing.T) {
+	_, sub := projectDir(t)
+	t.Chdir(sub)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"list"}, &out, &errOut, t.TempDir()); code != 0 || !strings.Contains(out.String(), "shop") || !strings.Contains(out.String(), "project") {
+		t.Errorf("list: %d\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	if code := run([]string{"lint"}, &out, &errOut, t.TempDir()); code != 0 || !strings.Contains(out.String(), ".lazify.yaml") {
+		t.Errorf("lint: %d\n%s%s", code, out.String(), errOut.String())
 	}
 }

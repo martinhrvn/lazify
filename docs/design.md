@@ -308,7 +308,11 @@ panels:
           - { name: JSON, cmd: "echo {{.}}", format: json }
 ```
 
-Other examples (not repeated here): `examples/nix.yaml` (**lazynix**) — system and
+Other examples (not repeated here): `examples/dev/` — a **project dashboard** over
+[process-compose](https://f1bonacc1.github.io/process-compose/): its `.lazify.yaml` lists the
+services of `process-compose.yaml` (status, health, restarts), streams their logs, and
+starts/stops/restarts them; U/D bring the project up/down (run in the background on a unix
+socket per project, so services outlive lazify). `examples/nix.yaml` (**lazynix**) — system and
 home-manager generations as tabs (✓ current, nvd diff since the previous one),
 Enter into a generation's store closure (sizes, `why-depends`), flake inputs
 (rev, age), GC roots. Its writes — update inputs, upgrade, delete a generation —
@@ -489,6 +493,9 @@ apps:
 ```
 
 - `lazify <id>` → run the app with that id; `lazify <file.yaml> [id]` → run from a file.
+- `lazify` (no arguments) → the **project's own app**: the nearest `.lazify.yaml` (or `.yml`) in the current
+  directory or a parent, run from that directory; its app is named after the directory unless it has an
+  `id`. `list` and `lint` include it.
 - `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.

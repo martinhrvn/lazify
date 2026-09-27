@@ -1,0 +1,26 @@
+# The project's services, run by process-compose (https://f1bonacc1.github.io/process-compose/).
+# Simulated here so the example runs anywhere — in a real project these would be
+# e.g. `pnpm dev` and `postgres -D .pgdata`. Shell variables are written $$x:
+# process-compose substitutes ${x} itself.
+version: "0.5"
+processes:
+  db: # e.g. postgres -D .pgdata, or docker compose up db
+    command: |
+      rm -f .db-ready; echo "db: starting"; sleep 1; touch .db-ready
+      while :; do echo "db: $$(date +%T) checkpoint complete"; sleep 3; done
+    readiness_probe: # web waits for this
+      exec: { command: "test -f .db-ready" }
+      period_seconds: 1
+  web: # e.g. pnpm dev
+    command: |
+      echo "web: vite dev server on http://localhost:5173"
+      i=0; while :; do i=$$((i+1)); echo "web: GET /api/items 200 $$((i%40+3))ms"
+      [ $$((i%7)) = 0 ] && echo "web: ERROR timeout talking to db" >&2; sleep 1; done
+    depends_on:
+      db: { condition: process_healthy }
+  worker: # crashes now and then; process-compose restarts it
+    command: |
+      echo "worker: processing jobs"; sleep 8; echo "worker: FATAL out of memory" >&2; exit 1
+    depends_on:
+      db: { condition: process_healthy }
+    availability: { restart: on_failure, backoff_seconds: 2 }

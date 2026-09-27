@@ -114,3 +114,24 @@ func errStrings(errs []error) []string {
 	}
 	return out
 }
+
+func TestFindProject(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, "shop", "web", "src")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := FindProject(deep); ok {
+		t.Error("no project file anywhere: none found")
+	}
+	file := filepath.Join(root, "shop", ".lazify.yaml")
+	os.WriteFile(file, []byte("panels: []"), 0o644)
+	if got, ok := FindProject(deep); !ok || got != file {
+		t.Errorf("FindProject = %q, %v; want %q (nearest parent)", got, ok, file)
+	}
+	yml := filepath.Join(root, "shop", "web", ".lazify.yml")
+	os.WriteFile(yml, []byte("panels: []"), 0o644)
+	if got, _ := FindProject(deep); got != yml {
+		t.Errorf("the nearest one wins: %q", got)
+	}
+}
