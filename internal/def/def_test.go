@@ -216,6 +216,7 @@ func TestValidationErrors(t *testing.T) {
 		{"old actions map", "panels: [{id: a, source: x}]\nactions:\n  a: [{key: x, cmd: c}]", "t.yaml:2: actions: panel actions now live in the panel"},
 		{"action no key", "panels:\n  - id: a\n    source: x\n    actions: [{cmd: c}]", "panel a: action: key is required"},
 		{"action reserved key", "panels:\n  - id: a\n    source: x\n    actions: [{key: q, cmd: c}]", "key \"q\" is reserved"},
+		{"sort key reserved", "panels:\n  - id: a\n    source: x\n    actions: [{key: \">\", cmd: c}]", "key \">\" is reserved"},
 		{"action dup key", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: c}, {key: x, cmd: d}]", "duplicate key \"x\""},
 		{"action bad mode", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: c, mode: loud}]", "mode"},
 		{"action input without prompt", "panels:\n  - id: a\n    source: x\n    actions: [{key: x, cmd: 'c {{input}}'}]", "prompt"},

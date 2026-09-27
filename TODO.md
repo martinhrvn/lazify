@@ -114,3 +114,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] dev (project dashboard over process-compose): services, health, logs, start/stop/restart, up/down
 - [x] nix (lazynix): generations (system/home tabs, nvd diffs), closure drill-down, flake inputs, GC roots; confirmed writes (update, upgrade, delete generation)
 - [ ] later (nix): garbage collect, switch/rollback to a generation, `nh` integration
+
+## Sorting ✅
+- [x] `>`/`<` sort the focused list by the next/previous column (through unsorted), `~` reverses, click a title
+- [x] by the value before formatting: numbers, times, natural text; cursor kept, refreshes keep the order
+- [ ] later: a default `sort:` in the definition; remember the sort between runs

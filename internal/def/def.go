@@ -28,7 +28,7 @@ var ReservedKeys = []string{
 	"j", "k", "up", "down", "tab", "shift+tab",
 	"1", "2", "3", "4", "5", "6", "7", "8", "9",
 	"enter", "esc", "[", "]", "ctrl+d", "ctrl+u", "J", "K",
-	"/", "r", "?", "q", "ctrl+c", "o",
+	"/", "r", "?", "q", "ctrl+c", "o", "<", ">", "~",
 }
 
 // Definition is a validated app definition.

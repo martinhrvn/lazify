@@ -455,6 +455,7 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `/` | filter the focused list panel (or an open picker) as you type: case-insensitive, every space-separated term must match the row's text; Enter keeps it (title shows `/text`), Esc clears it. The cursor moves over matching rows only; with no match the panel has no selection. |
 | `/` on a content panel | **search** it like less, as you type: plain text, case-insensitive unless the query has a capital; matches are highlighted in place (colours kept), the current one differently; the title shows `/text 3/12`. Enter keeps it, Esc clears it. |
 | `n`/`N`, `g`/`G` | on a focused content panel: next/previous match (wrapping), top/bottom (bottom resumes following a stream). Elsewhere they are free for actions. |
+| `>` / `<`, `~` | **sort** the focused list by the next / previous column (a plain list: by its label), passing through the command's own order; `~` reverses. Columns sort by their value before formatting (`ago` by time, `bytes` by size): numbers numerically, times as times, text case-insensitively with digit runs as numbers (`file2` < `file10`). The header shows `Mem ▼` (a plain list: its title). The cursor stays on its row, nothing re-runs, and refreshes keep the order. Clicking a column title sorts by it; again reverses. |
 | `r` | refresh focused panel |
 | `1..9` on a select | open its picker (Enter chooses, Esc cancels; focus stays where it was) |
 | `?` | help overlay: focused panel's actions, globals, navigation |

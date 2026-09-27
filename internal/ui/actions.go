@@ -205,7 +205,7 @@ var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
 	{"click", "focus panel, select row (again: enter)"}, {"wheel", "move / scroll"},
-	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows / search content"}, {"n/N", "next / previous match"}, {"g/G", "top / bottom of content"}, {"o", "options (panel and content)"}, {"?", "help"}, {"q", "quit"},
+	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows / search content"}, {"n/N", "next / previous match"}, {"g/G", "top / bottom of content"}, {"o", "options (panel and content)"}, {"</>", "sort by the next / previous column"}, {"~", "reverse the sort"}, {"click a title", "sort by that column (again: reverse)"}, {"?", "help"}, {"q", "quit"},
 }
 
 // statusLine is the bottom line: an open prompt or confirmation, otherwise
@@ -261,6 +261,9 @@ func (m Model) statusLine() string {
 	}
 	if !m.eng.IsContent(m.eng.Focused()) {
 		add("/", "filter")
+		if !m.eng.IsSelect(m.eng.Focused()) {
+			add("</>", "sort")
+		}
 	} else {
 		add("/", "search")
 		if m.activeSearch(m.eng.Focused()) != nil {

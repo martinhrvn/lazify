@@ -109,6 +109,12 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		v = m.eng.PickerView(r.id)
 	}
 	head, offset := listGeometry(v, r.h-2)
+	if len(v.Headers) > 0 && !r.picker && msg.Y == r.y+head { // the column titles: sort
+		if col := m.columnAt(v, msg.X-(r.x+1)); col >= 0 {
+			cmds = append(cmds, m.apply(m.eng.SortBy(r.id, col)))
+		}
+		return m, tea.Batch(cmds...)
+	}
 	row := msg.Y - (r.y + 1) - head + offset
 	if row < 0 || row >= len(v.Lines)+len(v.Columns) {
 		return m, tea.Batch(cmds...)

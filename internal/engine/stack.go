@@ -161,7 +161,7 @@ func (e *Engine) Back() (Effects, bool) {
 	ps := e.panels[closed]
 	e.cancel(ps)
 	e.cancelMark(ps)
-	*ps = panelState{def: ps.def} // reopening re-evaluates (the cache makes it instant)
+	*ps = panelState{def: ps.def, sortBy: ps.sortBy, sortDesc: ps.sortDesc} // reopening re-evaluates (the cache makes it instant)
 	if v := e.views[closed]; v != nil {
 		e.cancelView(v)
 		*v = viewState{}

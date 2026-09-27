@@ -293,6 +293,10 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.modal = modalHelp
 		m.helpVP.reset(false)
+	case ">", "<":
+		return m, m.apply(m.eng.SortNext(map[string]int{">": 1, "<": -1}[k]))
+	case "~":
+		return m, m.apply(m.eng.ReverseSort())
 	case "o":
 		return m.openOptions()
 	case "/":
@@ -498,29 +502,13 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		return ""
 	}
 	if len(v.Headers) > 0 {
-		// Widths from every row (so they don't jump while scrolling), but only
-		// the rows on screen are drawn.
-		cellDeco := func(i, j int) def.Deco {
-			if i < len(v.CellDeco) && j < len(v.CellDeco[i]) {
-				return v.CellDeco[i][j]
-			}
-			return def.Deco{}
-		}
-		widths := make([]int, len(v.Headers))
-		for j, hd := range v.Headers {
-			widths[j] = ansi.StringWidth(hd)
-		}
-		for i, row := range v.Columns {
-			for j, c := range row {
-				widths[j] = max(widths[j], ansi.StringWidth(withHelper(c, cellDeco(i, j), m.frame)))
-			}
-		}
-		head = append(head, styleHeader.Render(gutter(-1)+rowHelper(-1)+alignRow(v.Headers, widths)))
+		widths := m.tableWidths(v)
+		head = append(head, styleHeader.Render(gutter(-1)+rowHelper(-1)+alignRow(headers(v), widths)))
 		n = len(v.Columns)
 		row = func(i int) string {
 			cells := make([]string, len(v.Columns[i]))
 			for j, c := range v.Columns[i] {
-				cells[j] = decorate(c, cellDeco(i, j), m.frame)
+				cells[j] = decorate(c, cellDeco(v, i, j), m.frame)
 			}
 			return gutter(i) + rowHelper(i) + alignRow(cells, widths)
 		}
@@ -750,7 +738,7 @@ func alignRow(cells []string, widths []int) string {
 			parts[i] = padRight(c, widths[i])
 		}
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, strings.Repeat(" ", colGap))
 }
 
 // Recall sets the rows to start on (panel id → row key), remembered from the

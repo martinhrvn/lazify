@@ -45,6 +45,9 @@ func (m Model) panelBox(id string, crumbs []string, w, h int) (string, []string)
 		if f := m.eng.Filter(id); f != "" {
 			title += styleDim.Render(" /" + f)
 		}
+		if v := m.eng.View(id); len(v.Headers) == 0 {
+			title += sortMark(v) // a plain list: the mark goes in its title
+		}
 		if o := m.eng.View(id).Options; len(o) > 0 {
 			title += optionTitle(o)
 		}

@@ -40,20 +40,22 @@ type Effects struct {
 
 // PanelView is what the UI needs to draw a panel.
 type PanelView struct {
-	ID      string
-	Title   string
-	Lines   []string   // rendered labels (when the panel has no columns)
-	Headers []string   // column titles (when it has columns)
-	Columns [][]string // per row, rendered column values
-	Cursor  int
-	Loading bool
-	Stale   bool     // rows shown are not (yet) for the current selection
-	Err     string   // last run's error
-	Blocked string   // why the panel cannot run
-	Marked  []bool   // per row, when the panel has a mark
-	MarkErr string   // why the mark command failed
-	Filter  string   // the active filter ("" = none)
-	Options []string // options set away from their defaults, as id=value (see options.go)
+	ID       string
+	Title    string
+	Lines    []string   // rendered labels (when the panel has no columns)
+	Headers  []string   // column titles (when it has columns)
+	Columns  [][]string // per row, rendered column values
+	Cursor   int
+	Loading  bool
+	Stale    bool     // rows shown are not (yet) for the current selection
+	Err      string   // last run's error
+	Blocked  string   // why the panel cannot run
+	Marked   []bool   // per row, when the panel has a mark
+	MarkErr  string   // why the mark command failed
+	Filter   string   // the active filter ("" = none)
+	Options  []string // options set away from their defaults, as id=value (see options.go)
+	SortCol  int      // the column sorted by, -1 = the command's order (sort.go)
+	SortDesc bool     // descending
 	// Decorations from styles, parallel to Lines / Columns (zero = none).
 	LineDeco []def.Deco
 	CellDeco [][]def.Deco
@@ -77,6 +79,10 @@ type panelState struct {
 
 	rendered    []renderedRow // the rows as last displayed; see renderedRows
 	renderedFor string
+
+	src      []rows.Row // the rows in the command's order; rows is them sorted (sort.go)
+	sortBy   int        // 0 = the command's order, else column index + 1
+	sortDesc bool
 
 	marks      map[string]bool // output lines of the mark command
 	markErr    string
@@ -311,7 +317,7 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 		if _, ok := e.selection(dep); !ok {
 			e.cancel(ps)
 			e.cancelMark(ps)
-			*ps = panelState{def: ps.def, blocked: "no selection in " + dep}
+			*ps = panelState{def: ps.def, blocked: "no selection in " + dep, sortBy: ps.sortBy, sortDesc: ps.sortDesc}
 			return
 		}
 	}
@@ -384,7 +390,8 @@ func (e *Engine) cancel(ps *panelState) {
 // setRows shows rows produced by cmd, keeping the cursor on the same key.
 func (e *Engine) setRows(ps *panelState, cmd string, rs []rows.Row) {
 	prevKey, hadPrev := e.rowKey(ps, ps.cursor)
-	ps.rows, ps.cmd, ps.err, ps.stale, ps.cursor = rs, cmd, "", false, 0
+	ps.src = rs
+	ps.rows, ps.cmd, ps.err, ps.stale, ps.cursor = e.sorted(ps, rs), cmd, "", false, 0
 	ps.rendered = nil
 	if hadPrev {
 		for i := range ps.rows {
@@ -533,6 +540,7 @@ func (e *Engine) view(id string, list bool) PanelView {
 	}
 	v.Filter = ps.filter
 	v.Options = e.optionSummary(id)
+	v.SortCol, v.SortDesc = ps.sortBy-1, ps.sortDesc
 	return v
 }
 
