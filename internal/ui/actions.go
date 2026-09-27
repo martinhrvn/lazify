@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -193,8 +192,11 @@ func (m Model) statusLine() string {
 	case modalPrompt, modalFilter:
 		return ansi.Truncate(m.input.View(), m.width, "…")
 	case modalConfirm:
-		q := fmt.Sprintf("%s: %s? [y/N]", m.pending.Desc(), m.pendingReq.Cmd)
-		return ansi.Truncate(styleRunning.Render(q), m.width, "…")
+		// The command on one line, cut to fit so the question stays visible.
+		head, tail := m.pending.Desc()+": ", "? [y/N]"
+		cmd := strings.Join(strings.Fields(m.pendingReq.Cmd), " ")
+		cmd = ansi.Truncate(cmd, max(1, m.width-ansi.StringWidth(head+tail)), "…")
+		return ansi.Truncate(styleRunning.Render(head+cmd+tail), m.width, "…")
 	}
 
 	var left string

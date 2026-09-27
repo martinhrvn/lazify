@@ -1,0 +1,172 @@
+id: nix
+name: lazynix
+# NixOS: system and home-manager generations (what changed, their closures),
+# flake inputs and GC roots. Writes — update inputs, upgrade, delete a
+# generation — all ask first; sudo ones take over the terminal to prompt.
+# Needs nvd. The flake is picked from $PWD, $NH_FLAKE, $FLAKE, /etc/nixos, …
+env:
+  # NIX_CHANGES <profile link>: what changed since the profile's previous
+  # generation that still exists (deleted ones leave gaps).
+  NIX_CHANGES: |
+    link=${1%-link}; n=${link##*-}; base=${link%-*}; prev=
+    for f in "$base"-*-link; do
+      m=${f#"$base"-}; m=${m%-link}
+      [ "$m" -lt "$n" ] && { [ -z "$prev" ] || [ "$m" -gt "$prev" ]; } && prev=$m
+    done
+    [ -n "$prev" ] || { echo "no earlier generation"; exit 0; }
+    nvd --color always diff "$base-$prev-link" "$1"
+  # NIX_DONE: keep an interactive command's output on screen until enter.
+  NIX_DONE: 'printf "\n── done: press enter to return ──"; read -r _'
+
+panels:
+  - id: flake # a select panel: the flake that inputs and the write actions use
+    title: Flake
+    select: inline
+    source: |
+      for d in "$PWD" "${NH_FLAKE:-}" "${FLAKE:-}" /etc/nixos "$HOME/.config/nixos" "$HOME/nixos" "$HOME/dotfiles"; do
+        [ -n "$d" ] && [ -f "$d/flake.nix" ] && echo "$d"
+      done | awk '!seen[$0]++'
+
+  - id: generations
+    title: System
+    # dates are local without a zone: add it, so "ago" is right
+    source: |
+      nixos-rebuild list-generations --json |
+      jq --arg tz "$(date +%:z)" 'map(.date |= sub(" "; "T") + $tz | .path = "/nix/var/nix/profiles/system-\(.generation)-link")'
+    rows: .[]
+    key: .generation
+    enter: closure # Enter: the packages in this generation
+    columns:
+      - { title: Gen, value: "{{.generation}}" }
+      - { title: Built, value: "{{.date}}", format: ago }
+      - { title: NixOS, value: "{{.nixosVersion}}" }
+      - { title: Kernel, value: "{{.kernelVersion}}" }
+    row_style: { value: "{{.current}}", map: { "true": { icon: check, color: ok } } }
+    actions:
+      - key: D
+        desc: Delete generation
+        confirm: true
+        mode: interactive
+        cmd: |
+          if {{.current}}; then echo "{{.generation}} is the current generation"
+          else sudo nix-env --delete-generations {{.generation}} -p /nix/var/nix/profiles/system
+          fi; sh -c "$NIX_DONE"
+        refresh: [generations]
+  - id: home
+    title: Home
+    tab_of: generations # [ / ] switch between System and Home
+    source: |
+      p=${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/home-manager
+      [ -e "$p" ] || p=/nix/var/nix/profiles/per-user/$USER/home-manager
+      cur=$(readlink "$p")
+      for l in "$p"-*-link; do
+        [ -e "$l" ] || continue
+        n=${l##*-manager-}
+        printf '%s\t%s\t%s\t%s\n' "${n%-link}" "$(date -d @"$(stat -c %Y "$l")" -Iseconds)" "$([ "${l##*/}" = "$cur" ] && echo true)" "$l"
+      done | jq -Rn '[inputs | split("\t") | {generation: (.[0] | tonumber), date: .[1], current: (.[2] == "true"), path: .[3]}] | sort_by(-.generation)'
+    rows: .[]
+    key: .generation
+    columns:
+      - { title: Gen, value: "{{.generation}}" }
+      - { title: Built, value: "{{.date}}", format: ago }
+    row_style: { value: "{{.current}}", map: { "true": { icon: check, color: ok } } }
+    actions:
+      - key: D
+        desc: Delete generation
+        confirm: true
+        cmd: |
+          if {{.current}}; then echo "{{.generation}} is the current generation" >&2; exit 1; fi
+          link={{.path}}; nix-env --delete-generations {{.generation}} -p "${link%-*-link}"
+        refresh: [home]
+  - id: closure # entered from a system generation
+    title: Packages
+    source: nix path-info -rsS --json {{generations.path}}
+    # the JSON is an object keyed by path (older nix: an array); biggest first
+    rows: >-
+      [if type == "array" then .[] else to_entries[] | .value + {path: .key} end
+       | {path, hash: .path[11:18], name: .path[44:], narSize, closureSize}] | sort_by(-.closureSize)[]
+    key: .path
+    columns:
+      - { title: Closure, value: "{{.closureSize}}", format: bytes }
+      - { title: Size, value: "{{.narSize}}", format: bytes }
+      - { title: Hash, value: "{{.hash}}" } # tells same-named paths apart
+      - { title: Package, value: "{{.name}}" }
+
+  - id: inputs
+    title: Inputs
+    source: nix flake metadata --json {{flake.line}}
+    # the root's direct inputs; "follows" (an array) point at another input
+    rows: >-
+      .locks as $l | $l.nodes[$l.root].inputs | to_entries[] | select(.value | type == "string")
+      | $l.nodes[.value] as $n
+      | {name: .key, node: $n, rev: (($n.locked.rev // "") | .[:7]), lastModified: $n.locked.lastModified,
+         source: (if $n.original.owner then "\($n.original.owner)/\($n.original.repo)"
+                  else ($n.original.url // $n.original.path // $n.original.type) end)}
+    key: .name
+    columns:
+      - { title: Input, value: "{{.name}}" }
+      - { title: Source, value: "{{.source}}" }
+      - { title: Rev, value: "{{.rev}}" }
+      - { title: Updated, value: "{{.lastModified}}", format: ago }
+    actions:
+      - key: u
+        desc: Update input
+        confirm: true
+        cmd: nix flake update {{.name}} --flake {{flake.line}}
+        refresh: [inputs]
+
+  - id: roots
+    title: GC roots
+    # {censored}: roots of other users; /proc: running processes.
+    # Each line becomes: root -> name (the store path without its hash) -> store path
+    source: >-
+      nix-store --gc --print-roots 2>/dev/null | grep -v -e '{censored}' -e '^/proc/' |
+      sed 's|^"\{0,1\}\([^"]*\)"\{0,1\} -> \(/nix/store/[a-z0-9]*-\)\(.*\)$|\1 -> \3 -> \2\3|'
+    split: " -> "
+    columns:
+      - { title: Keeps, value: "{{.fields.1}}" }
+      - { title: Root, value: "{{.fields.0}}" }
+
+  - id: main
+    title: Details
+    side: center
+    content:
+      generations:
+        tabs:
+          - { name: Changes, cmd: 'sh -c "$NIX_CHANGES" changes {{.path}}' }
+          - { name: vs Current, cmd: "nvd --color always diff /run/current-system {{.path}}" }
+          - { name: Packages, cmd: "nvd --color always list -r {{.path}}" }
+          - { name: JSON, cmd: "echo {{.}}", format: json }
+      home:
+        tabs:
+          - { name: Changes, cmd: 'sh -c "$NIX_CHANGES" changes {{.path}}' }
+          - { name: Packages, cmd: "nvd --color always list -r {{.path}}" }
+          - { name: JSON, cmd: "echo {{.}}", format: json }
+      closure:
+        tabs:
+          - { name: Why, cmd: "nix why-depends {{generations.path}} {{.path}}" }
+          - { name: References, cmd: "nix-store -q --references {{.path}}" }
+          - { name: Referrers, cmd: "nix-store -q --referrers {{.path}}" }
+      inputs:
+        tabs:
+          - { name: Info, cmd: "nix flake metadata {{flake.line}}" }
+          - { name: JSON, cmd: "echo {{.node}}", format: json }
+      roots:
+        tabs:
+          - { name: Info, cmd: "nix path-info -Sh {{.fields.2}}" }
+          - { name: Referrers, cmd: "nix-store -q --referrers {{.fields.2}}" }
+
+actions: # global: need a flake; each asks first
+  - key: U
+    desc: Update all inputs
+    confirm: true
+    cmd: nix flake update --flake {{flake.line}}
+    refresh: [inputs]
+  - key: S
+    desc: Upgrade (update + switch)
+    confirm: true
+    mode: interactive
+    cmd: |
+      nix flake update --flake {{flake.line}} &&
+      sudo nixos-rebuild switch --flake {{flake.line}}; sh -c "$NIX_DONE"
+    refresh: [generations, home, inputs]

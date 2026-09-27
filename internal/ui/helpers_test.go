@@ -121,3 +121,31 @@ func TestSpinnerTicksOnlyWhenShown(t *testing.T) {
 		}
 	}
 }
+
+func TestRowIconKeepsColumnsAligned(t *testing.T) {
+	src := `
+panels:
+  - id: gens
+    source: x
+    rows: .[]
+    columns:
+      - {title: Gen, value: "{{.gen}}"}
+      - {title: Date, value: "{{.date}}"}
+    row_style: {value: "{{.current}}", map: {"true": {icon: check, color: ok}}}
+`
+	r := &fakeRunner{out: map[string]string{"x": `[
+	  {"gen":440,"date":"today","current":true},
+	  {"gen":439,"date":"yesterday","current":false}]`}}
+	s := screen(start(t, src, r))
+	header, cur, old := lineWith(s, "Date"), lineWith(s, "today"), lineWith(s, "yesterday")
+	colOf := func(line, text string) int { return ansi.StringWidth(line[:strings.Index(line, text)]) }
+	if c := colOf(header, "Gen"); c != colOf(cur, "440") || c != colOf(old, "439") {
+		t.Errorf("row icons must not shift the columns:\n%s\n%s\n%s", header, cur, old)
+	}
+	if c := colOf(header, "Date"); c != colOf(cur, "today") || c != colOf(old, "yesterday") {
+		t.Errorf("columns misaligned:\n%s\n%s\n%s", header, cur, old)
+	}
+	if !strings.Contains(cur, "✓") {
+		t.Errorf("current row lost its icon: %q", cur)
+	}
+}

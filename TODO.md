@@ -104,3 +104,5 @@ See `docs/design.md` §11 for milestone scope.
 - [ ] later: themes (remap semantic colours, ASCII icons), more formatters as needed
 
 ## M6 — example definitions (git-lite, cloudwatch, ecs)
+- [x] nix (lazynix): generations (system/home tabs, nvd diffs), closure drill-down, flake inputs, GC roots; confirmed writes (update, upgrade, delete generation)
+- [ ] later (nix): garbage collect, switch/rollback to a generation, `nh` integration

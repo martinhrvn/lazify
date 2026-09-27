@@ -261,6 +261,13 @@ panels:
           - { name: JSON,   cmd: "echo {{.}}", format: json }
 ```
 
+Other examples (not repeated here): `examples/nix.yaml` (**lazynix**) — system and
+home-manager generations as tabs (✓ current, nvd diff since the previous one),
+Enter into a generation's store closure (sizes, `why-depends`), flake inputs
+(rev, age), GC roots. Its writes — update inputs, upgrade, delete a generation —
+all `confirm:`; the sudo ones are `mode: interactive`. `examples/tail.yaml`,
+`examples/dirs.yaml`: small demos.
+
 ### 4.3 Field reference
 
 **Panel**

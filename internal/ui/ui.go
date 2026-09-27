@@ -424,10 +424,18 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 			return "  "
 		}
 	}
-	// A row style's helper goes at the start of the row.
+	// A row style's helper goes at the start of the row; when any row has
+	// one, every row (and the header) reserves its two columns.
+	hasHelper := func(i int) bool {
+		return i >= 0 && i < len(v.RowDeco) && (v.RowDeco[i].Icon != "" || v.RowDeco[i].Spinner)
+	}
+	helperGutter := slices.ContainsFunc(v.RowDeco, func(d def.Deco) bool { return d.Icon != "" || d.Spinner })
 	rowHelper := func(i int) string {
-		if i < len(v.RowDeco) && (v.RowDeco[i].Icon != "" || v.RowDeco[i].Spinner) {
+		switch {
+		case hasHelper(i):
 			return decorate("", def.Deco{Icon: v.RowDeco[i].Icon, Spinner: v.RowDeco[i].Spinner, HideText: true}, m.frame) + " "
+		case helperGutter:
+			return "  "
 		}
 		return ""
 	}
@@ -444,7 +452,7 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 			}
 		}
 		widths := columnWidths(v.Headers, cells)
-		head = append(head, styleHeader.Render(gutter(-1)+alignRow(v.Headers, widths)))
+		head = append(head, styleHeader.Render(gutter(-1)+rowHelper(-1)+alignRow(v.Headers, widths)))
 		for i, row := range cells {
 			rows = append(rows, gutter(i)+rowHelper(i)+alignRow(row, widths))
 		}

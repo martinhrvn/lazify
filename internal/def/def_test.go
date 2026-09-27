@@ -747,3 +747,38 @@ func TestEnterFocusErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadNixExample(t *testing.T) {
+	d, err := Load("../../examples/nix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ID != "nix" || d.Panel("flake").Select != "inline" {
+		t.Errorf("id %q, flake select %q", d.ID, d.Panel("flake").Select)
+	}
+	// Generations don't need a flake: only inputs and the flake actions use it.
+	for _, id := range []string{"generations", "home", "closure", "roots"} {
+		if slices.Contains(d.Panel(id).Deps, "flake") {
+			t.Errorf("%s waits for a flake: %v", id, d.Panel(id).Deps)
+		}
+	}
+	if !slices.Contains(d.Panel("inputs").Deps, "flake") {
+		t.Errorf("inputs deps = %v", d.Panel("inputs").Deps)
+	}
+	if d.Panel("home").TabOf != "generations" || d.Panel("closure").Parent != "generations" {
+		t.Errorf("home tab_of %q, closure parent %q", d.Panel("home").TabOf, d.Panel("closure").Parent)
+	}
+	// Every write asks first.
+	actions := slices.Clone(d.Actions)
+	for _, p := range d.Panels {
+		actions = append(actions, p.Actions...)
+	}
+	if len(actions) != 5 {
+		t.Errorf("actions = %d, want u, D ×2, U, S", len(actions))
+	}
+	for _, a := range actions {
+		if !a.Confirm {
+			t.Errorf("%s (%s) must confirm", a.Key, a.Desc)
+		}
+	}
+}

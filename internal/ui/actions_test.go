@@ -196,3 +196,28 @@ func TestHelpScrollsWhenTaller(t *testing.T) {
 		t.Errorf("scrolling help should reach the end:\n%s", s)
 	}
 }
+
+func TestConfirmShowsLongCommandsOnOneLine(t *testing.T) {
+	src := `
+panels:
+  - id: gens
+    source: gens
+    actions:
+      - key: D
+        desc: Delete
+        confirm: true
+        cmd: |
+          if false; then echo "the current generation is kept, whatever else happens here"
+          else nix-env --delete-generations {{.line}} -p /nix/var/nix/profiles/system
+          fi
+`
+	m := start(t, src, &fakeRunner{out: map[string]string{"gens": "439\n"}})
+	m = key(t, m, "D")
+	s := statusOf(m)
+	if !strings.HasPrefix(s, "Delete: if false; then echo") || !strings.HasSuffix(s, "? [y/N]") {
+		t.Errorf("want the command on one line, cut to fit before [y/N]: %q", s)
+	}
+	if w := ansi.StringWidth(s); w > 100 {
+		t.Errorf("prompt is %d columns wide, the screen 100", w)
+	}
+}
