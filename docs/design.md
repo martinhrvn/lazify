@@ -424,6 +424,7 @@ intended continuation would run as a separate command (e.g. inside `$(...)`).
   a popup is drawn centered over the UI and keeps focus (`tab`/`1-9` do nothing) until `esc`.
   Esc closes the top popup or picker, else clears the focused panel's filter, else leaves the focused
   slot's deepest level, else dismisses an action error.
+- The focused list shows its cursor reversed; **unfocused lists keep their selected row visible** on a quiet grey background, so you can see what the other panels follow (selects show just their choice).
 - A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough), with a **scroll bar** (┃ in the right border) when it doesn't fit — list panels too. Streams
   follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
   Tabs expand to 4 spaces and `\r` progress lines keep only their final state.

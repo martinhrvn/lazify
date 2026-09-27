@@ -22,9 +22,11 @@ import (
 )
 
 var (
-	colorFocus     = lipgloss.Color("2")
-	colorBorder    = lipgloss.Color("8")
-	styleCursor    = lipgloss.NewStyle().Reverse(true)
+	colorFocus  = lipgloss.Color("2")
+	colorBorder = lipgloss.Color("8")
+	styleCursor = lipgloss.NewStyle().Reverse(true)
+	// the selected row of an unfocused list: what the other panels follow
+	styleSelected  = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 	styleDim       = lipgloss.NewStyle().Faint(true)
 	styleErr       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleHeader    = lipgloss.NewStyle().Bold(true)
@@ -456,11 +458,27 @@ func (m Model) wantLines(id string) int {
 
 // panelLines renders a panel's content, scrolled so the cursor is visible.
 func (m Model) panelLines(id string, w, h int) []string {
-	return m.listLines(m.eng.View(id), id == m.eng.Focused(), w, h)
+	cursor := inactiveCursor
+	switch {
+	case id == m.eng.Focused():
+		cursor = activeCursor
+	case m.eng.IsSelect(id):
+		cursor = noCursor // shows just its choice
+	}
+	return m.listLines(m.eng.View(id), cursor, w, h)
 }
 
-// listLines renders a list view; focused shows the cursor.
-func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
+// cursorMode is how a list shows its selected row.
+type cursorMode int
+
+const (
+	noCursor       cursorMode = iota
+	inactiveCursor            // unfocused: a quiet background
+	activeCursor              // focused: reversed
+)
+
+// listLines renders a list view with its cursor shown as cursor says.
+func (m Model) listLines(v engine.PanelView, cursor cursorMode, w, h int) []string {
 	var head []string
 	var n int                  // rows
 	var row func(i int) string // row i, drawn
@@ -530,8 +548,10 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 		line := ansi.Truncate(row(i), w, "…")
 		// within(): these styles span coloured cells without being cut short.
 		switch {
-		case i == v.Cursor && focused:
+		case i == v.Cursor && cursor == activeCursor:
 			line = within(styleCursor, padRight(line, w))
+		case i == v.Cursor && cursor == inactiveCursor:
+			line = within(styleSelected, padRight(line, w))
 		case v.Stale:
 			line = within(styleDim, line)
 		case v.Marked != nil && v.Marked[i]:

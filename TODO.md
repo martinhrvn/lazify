@@ -119,3 +119,4 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `>`/`<` sort the focused list by the next/previous column (through unsorted), `~` reverses, click a title
 - [x] by the value before formatting: numbers, times, natural text; cursor kept, refreshes keep the order
 - [ ] later: a default `sort:` in the definition; remember the sort between runs
+- [x] unfocused lists show their selected row (quiet background); the focused one keeps the reversed cursor

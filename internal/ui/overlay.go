@@ -73,7 +73,7 @@ func (m Model) popupBox(pv engine.PopupView, bodyH int) string {
 		if pick.Filter != "" {
 			title += styleDim.Render(" /" + pick.Filter)
 		}
-		return box(title, m.listLines(pick, true, w-2, h-2), w, h-2, true)
+		return box(title, m.listLines(pick, activeCursor, w-2, h-2), w, h-2, true)
 	}
 	w := max(10, m.width*pv.Width/100)
 	h := max(3, bodyH*pv.Height/100)
