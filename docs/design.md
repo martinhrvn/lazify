@@ -139,15 +139,15 @@ actions:                                             # global: work whatever is 
 
 ```yaml
 name: lazyecs
-# Read-only: browse clusters, services and tasks and follow their logs. No actions.
-env:                                     # every command runs with these; they follow the selects
+# Read-only: browse clusters, services and tasks and read their logs (f: follow live). No write actions.
+env: # every command runs with these; they follow the selects
   AWS_PROFILE: "{{profile.line}}"
-  AWS_REGION:  "{{region.line}}"
-  # ECS_TAIL <task definition> <task id|service> [aws logs tail args...]: follow a
+  AWS_REGION: "{{region.line}}"
+  # ECS_LOGS <task definition> <task id|service> [aws logs tail args...]: print a
   # task's (or every task of a service's) log stream. The awslogs group and stream
   # prefix come from the task definition's first logging container; a task's
   # stream is <prefix>/<container>/<task id>. Output is made readable by jq below.
-  ECS_TAIL: |
+  ECS_LOGS: |
     td=$1 which=$2; shift 2
     info=$(aws ecs describe-task-definition --task-definition "$td" --output text \
       --query 'taskDefinition.containerDefinitions[?logConfiguration.logDriver==`awslogs`] | [0].[name, logConfiguration.options."awslogs-group", logConfiguration.options."awslogs-stream-prefix"]')
@@ -159,8 +159,11 @@ env:                                     # every command runs with these; they f
     elif [ "$which" = service ]; then set -- --log-stream-name-prefix "$prefix/$name/" "$@"
     else set -- --log-stream-names "$prefix/$name/$which" "$@"
     fi
-    echo "── $group: the last hour, then following (local time) ──"
-    aws logs tail "$group" --follow --since 1h --format short "$@" | jq -rR --unbuffered "$ECS_LOG_FORMAT"
+    aws logs tail "$group" --format short "$@" | jq -rR --unbuffered "$ECS_LOG_FORMAT"
+  # ECS_FOLLOW: a full-screen pager for a live tail (f); ctrl-c stops following, q quits.
+  ECS_FOLLOW: |
+    if command -v bat >/dev/null; then exec bat -l log --style=plain --paging=always --pager "less -R +F"
+    else exec less -R +F; fi
   # One line per JSON log event: time LEVEL logger message {extra fields}, with
   # error stacks indented below. Bunyan/pino numeric levels and common string
   # levels are understood; other lines keep their text. aws prints UTC: times are
@@ -194,14 +197,15 @@ env:                                     # every command runs with these; they f
       end
 
 panels:
-  - id: profile                          # a select panel: press its number to pick
+  - id: profile # a select panel: press its number to pick
     title: Profile
     select: true
     source: aws configure list-profiles
-    mark: {source: 'echo "${AWS_PROFILE:-default}"'}   # start on your current profile
+    mark: { source: 'echo "${AWS_PROFILE:-default}"' } # start on your current profile
   - id: region
     title: Region
     select: true
+    default: eu-central-1
     values: [eu-west-1, eu-central-1, us-east-1]
 
   - id: clusters
@@ -214,7 +218,8 @@ panels:
     rows: .clusters[]
     key: .clusterArn
     label: "{{.clusterName}}"
-    enter: {focus: services}           # Enter: on to the cluster's services
+    enter: { focus: services } # Enter: on to the cluster's services
+    remember: true # start on the cluster (and service) from last time
 
   - id: services
     title: Services
@@ -224,15 +229,22 @@ panels:
     # health is computed here (jq), then styled below: styles are lookups, not logic
     rows: '.services[] | . + {health: (if .runningCount < .desiredCount then "degraded" else "ok" end)}'
     key: .serviceArn
-    enter: {focus: tasks}
+    enter: { focus: tasks }
+    remember: true
     columns:
       - { title: Service, value: "{{.serviceName}}" }
       - title: Tasks
         value: "{{.runningCount}}/{{.desiredCount}}"
-        format: bar                        # ▰▰▰▰▰▱▱▱▱▱ 1/2
-        style: {value: "{{.health}}", map: {degraded: error, ok: ok}}
-      - { title: Status, value: "{{.status}}", style: {ACTIVE: ok, DRAINING: warn, "*": dim} }
+        format: bar # ▰▰▰▰▰▱▱▱▱▱ 1/2
+        style: { value: "{{.health}}", map: { degraded: error, ok: ok } }
+      - {
+          title: Status,
+          value: "{{.status}}",
+          style: { ACTIVE: ok, DRAINING: warn, "*": dim },
+        }
     refresh: 10s
+    actions: # read-only: f follows the logs live in a pager
+      - { key: f, desc: Follow logs, mode: interactive, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --follow --since 10m | sh -c "$ECS_FOLLOW"' }
 
   - id: tasks
     title: Tasks
@@ -240,31 +252,54 @@ panels:
       aws ecs list-tasks --cluster {{clusters.clusterArn}} --service-name {{services.serviceName}}
       --query taskArns --output text | tr '\t' '\n' |
       xargs -r -n 100 aws ecs describe-tasks --cluster {{clusters.clusterArn}} --output json --tasks
-    rows: '.tasks[] | . + {id: (.taskArn | split("/") | last)}'   # id: the short task id
+    rows: '.tasks[] | . + {id: (.taskArn | split("/") | last)}' # id: the short task id
     key: .taskArn
     columns:
       - { title: Task, value: "{{.id}}" }
       - title: Status
         value: "{{.lastStatus}}"
-        style:                             # value → helper + colour
-          RUNNING: {icon: check, color: ok}
-          STOPPED: {icon: cross, color: error}
-          "*": {spinner: true, color: warn}  # PENDING, PROVISIONING, STOPPING, …
+        style: # value → helper + colour
+          RUNNING: { icon: check, color: ok }
+          STOPPED: { icon: cross, color: error }
+          "*": { spinner: true, color: warn } # PENDING, PROVISIONING, STOPPING, …
       - { title: Started, value: "{{.startedAt}}", format: ago }
+    actions:
+      - { key: f, desc: Follow logs, mode: interactive, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --follow --since 10m | sh -c "$ECS_FOLLOW"' }
 
   - id: main
     content:
       services:
+        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
         tabs:
-          - { name: Logs,   mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinition}} service' }
-          - { name: Errors, mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinition}} service --filter-pattern "{ \$.level >= 50 }"' }
-          - { name: Events, cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table" }
-          - { name: JSON,   cmd: "echo {{.}}", format: json }
+          - {
+              name: Logs,
+              mode: stream,
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}}',
+            }
+          - {
+              name: Errors,
+              mode: stream,
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}} --filter-pattern "{ \$.level >= 50 }"',
+            }
+          - {
+              name: Events,
+              cmd: "aws ecs describe-services --cluster {{clusters.clusterArn}} --services {{.serviceArn}} --query 'services[0].events[:30]' --output table",
+            }
+          - { name: JSON, cmd: "echo {{.}}", format: json }
       tasks:
+        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
         tabs:
-          - { name: Logs,   mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinitionArn}} {{.id}}' }
-          - { name: Errors, mode: stream, cmd: 'sh -c "$ECS_TAIL" ecs-tail {{.taskDefinitionArn}} {{.id}} --filter-pattern "{ \$.level >= 50 }"' }
-          - { name: JSON,   cmd: "echo {{.}}", format: json }
+          - {
+              name: Logs,
+              mode: stream,
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}}',
+            }
+          - {
+              name: Errors,
+              mode: stream,
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}} --filter-pattern "{ \$.level >= 50 }"',
+            }
+          - { name: JSON, cmd: "echo {{.}}", format: json }
 ```
 
 Other examples (not repeated here): `examples/nix.yaml` (**lazynix**) — system and

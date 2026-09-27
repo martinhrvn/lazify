@@ -86,13 +86,29 @@ func TestLoadECSExample(t *testing.T) {
 	if d.Panel("main").Content["tasks"].Tabs[0].Mode != "stream" {
 		t.Error("stream mode not parsed")
 	}
+	// Read-only: the only actions follow logs live (f), in a pager.
 	for _, p := range d.Panels {
-		if len(p.Actions) > 0 {
-			t.Errorf("the ECS example is read-only, but %s has actions", p.ID)
+		for _, a := range p.Actions {
+			if a.Key != "f" || a.Mode != "interactive" || !strings.Contains(a.Cmd.Source(), "--follow") {
+				t.Errorf("the ECS example is read-only, but %s has action %s (%s)", p.ID, a.Key, a.Desc)
+			}
 		}
 	}
 	if len(d.Actions) > 0 {
 		t.Error("the ECS example is read-only, but has global actions")
+	}
+	if a := d.Panel("tasks").Actions; len(a) != 1 {
+		t.Errorf("tasks should have the follow action: %+v", a)
+	}
+	// The log window is an option of the log entries, not hardcoded.
+	for _, entry := range []string{"services", "tasks"} {
+		c := d.Panel("main").Content[entry]
+		if len(c.Options) != 1 || c.Options[0].ID != "since" || !strings.Contains(c.Tabs[0].Cmd.Source(), "--since {{opt.since}}") {
+			t.Errorf("%s logs should use the since option: %+v", entry, c.Options)
+		}
+	}
+	if !d.Panel("clusters").Remember || !d.Panel("services").Remember {
+		t.Error("clusters and services should remember their row")
 	}
 	if tab := d.Panel("main").Content["services"].Tabs[0]; tab.Name != "Logs" || tab.Mode != "stream" {
 		t.Errorf("services should tail their logs: %+v", tab)
