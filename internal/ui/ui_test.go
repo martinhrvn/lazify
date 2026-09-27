@@ -99,6 +99,16 @@ func key(t *testing.T, m tea.Model, k string) tea.Model {
 		msg = tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "right":
+		msg = tea.KeyMsg{Type: tea.KeyRight}
+	case "left":
+		msg = tea.KeyMsg{Type: tea.KeyLeft}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+	case "ctrl+r":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlR}
 	case "ctrl+u":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:

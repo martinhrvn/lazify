@@ -16,7 +16,7 @@ panels:
       - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
-    source: git log --format='%h%x09%s%x09%ct' {{branches.line}}
+    source: git log --format='%h%x09%s%x09%ct' {{opt.since}} {{opt.author}} {{opt.merges}} -n {{opt.max}} {{branches.line}}
     split: "\t"                                        # line → fields[0], fields[1], fields[2]
     columns:
       - {title: Commit, value: "{{.fields.0}}", style: {"*": accent}}
@@ -24,6 +24,11 @@ panels:
       - {title: Age, value: "{{.fields.2}}", format: ago, style: {"*": dim}}
     key: .fields.0
     enter: files                                       # Enter drills in
+    options:                                           # o: set them; {{opt.x}} in the source
+      - {id: since, title: Since, type: date, flag: --since=}    # unset: all history
+      - {id: author, title: Author, source: "git log --format=%an | sort -u", flag: --author=}
+      - {id: merges, title: No merges, type: toggle, flag: --no-merges}
+      - {id: max, title: Max, values: ["300", "1000", "5000"]}
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
@@ -59,9 +64,10 @@ panels:
           - name: Log
             cmd: git log --oneline --graph --color=always {{.line}}
       commits:
+        options: [{id: context, title: Context lines, values: ["3", "10", "0"]}]   # this entry only
         tabs:
           - name: Diff
-            cmd: git show --color=always {{.fields.0}}
+            cmd: git show --color=always -U{{opt.context}} {{.fields.0}}
       files:
         tabs:
           - name: Diff

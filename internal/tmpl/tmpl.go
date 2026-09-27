@@ -8,6 +8,7 @@
 //	panel.a.b    a field of another panel's selection (bare `panel` = whole row)
 //	ctx.name     a context value
 //	input        the value typed into an action prompt
+//	opt.name     an option of the panel (or content entry) the template is in
 //
 // `\{{` produces a literal `{{`, e.g. for `docker ps --format '\{{.Names}}'`.
 package tmpl
@@ -25,7 +26,12 @@ const (
 	ScopeRow   = ""
 	ScopeCtx   = "ctx"
 	ScopeInput = "input"
+	ScopeOpt   = "opt" // an option of the panel (or content entry) the template belongs to
 )
+
+// Arg is an optional command argument (an option with a flag): shell-quoted
+// as one word when set, left out entirely when empty.
+type Arg string
 
 // Ref is a parsed reference.
 type Ref struct {
@@ -156,6 +162,8 @@ func parseRef(raw string) (Ref, error) {
 		return Ref{}, fmt.Errorf("invalid reference {{%s}}: input has no fields", raw)
 	case ref.Scope == ScopeCtx && len(ref.Path) != 1:
 		return Ref{}, fmt.Errorf("invalid reference {{%s}}: use ctx.<name>", raw)
+	case ref.Scope == ScopeOpt && len(ref.Path) != 1:
+		return Ref{}, fmt.Errorf("invalid reference {{%s}}: use opt.<name>", raw)
 	}
 	return ref, nil
 }
@@ -190,6 +198,9 @@ func (t *Template) Render(r Resolver, mode Mode) (string, error) {
 			continue
 		}
 		s := Format(v)
+		if a, ok := v.(Arg); ok && a == "" {
+			continue // an unset optional argument: nothing, not ''
+		}
 		if mode == Shell {
 			s = Quote(s)
 		}
@@ -206,6 +217,8 @@ func Format(v any) string {
 		return ""
 	case string:
 		return x
+	case Arg:
+		return string(x)
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	case bool:

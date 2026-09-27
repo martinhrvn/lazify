@@ -69,7 +69,7 @@ panels:
       - {key: D, desc: Delete, cmd: "git branch -D {{.line}}", confirm: true}
   - id: commits
     title: Commits
-    source: git log --format='%h%x09%s%x09%ct' {{branches.line}}
+    source: git log --format='%h%x09%s%x09%ct' {{opt.since}} {{opt.author}} {{opt.merges}} -n {{opt.max}} {{branches.line}}
     split: "\t"                                        # line → fields[0], fields[1], fields[2]
     columns:
       - {title: Commit, value: "{{.fields.0}}", style: {"*": accent}}
@@ -77,6 +77,11 @@ panels:
       - {title: Age, value: "{{.fields.2}}", format: ago, style: {"*": dim}}
     key: .fields.0
     enter: files                                       # Enter drills in
+    options:                                           # o: set them; {{opt.x}} in the source
+      - {id: since, title: Since, type: date, flag: --since=}    # unset: all history
+      - {id: author, title: Author, source: "git log --format=%an | sort -u", flag: --author=}
+      - {id: merges, title: No merges, type: toggle, flag: --no-merges}
+      - {id: max, title: Max, values: ["300", "1000", "5000"]}
   - id: files
     title: Files
     source: git show --name-only --format= {{commits.fields.0}}
@@ -112,9 +117,10 @@ panels:
           - name: Log
             cmd: git log --oneline --graph --color=always {{.line}}
       commits:
+        options: [{id: context, title: Context lines, values: ["3", "10", "0"]}]   # this entry only
         tabs:
           - name: Diff
-            cmd: git show --color=always {{.fields.0}}
+            cmd: git show --color=always -U{{opt.context}} {{.fields.0}}
       files:
         tabs:
           - name: Diff
@@ -280,6 +286,7 @@ all `confirm:`; the sudo ones are `mode: interactive`. `examples/tail.yaml`,
 | `select` | no | `popup` (or `true`) or `inline` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker — a dialog (`popup`) or the box itself expanding into the list (`inline`), never both (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else the row from last run (selects remember by default), else `default:`, else its `mark`, else the first row. |
 | `default` | no | The row a list panel starts on (a select's initial choice), matched against the row's `key`, else its label. `--set id=value` and a remembered row override it; a `mark` is used when none matches. |
 | `remember` | no | Start on the row this panel was on last run. Selects remember by default (`remember: false` opts out); other list panels opt in with `remember: true`. Not for Enter targets. Stored per app in `$XDG_STATE_HOME/lazify/<id>.yaml` (`~/.local/state/lazify`); a row that is gone falls back to `default`, then the mark. `--no-remember` neither restores nor saves. |
+| `options` | no | Values set while the app runs, in a form (`o`), read as `{{opt.id}}` by the panel's `source` and actions — or, under a content entry (`content: {commits: {options, tabs}}`), by that entry's tabs only; so Main can offer a "context lines" option for commits and none for files. Other panels read a list panel's as `{{panel.opt.id}}` (a dependency: changing it re-runs them). Each: `{id, title, type, default, flag}` plus `values:` or `source:` for a choice. Types: `text` (default), `choice` (`values:`, or `source:` — a command listing them, run when the form opens; `""` = any), `toggle`, `date` (`YYYY-MM-DD`; defaults and input may be relative: `today`, `-3d`, `-2w`). **`flag:`** makes it an optional argument: `flag+value` as one word when set, **nothing** when empty (a toggle: the flag when on) — `git log {{opt.author}}` with `flag: --author=`. Titles list values that differ from the default (`since=2026-09-20 author=me`). Not remembered between runs (yet). |
 | `rows` | no | jq expression producing one JSON value per row. Absent ⇒ one row per non-empty output line: `{line}`. |
 | `split` | no | For line output: separator; adds `fields: [...]`. |
 | `label` | no | Row display template. Default: `.line` or the whole value. |
@@ -326,6 +333,7 @@ intended continuation would run as a separate command (e.g. inside `$(...)`).
     `.` alone = whole row as JSON.
   - `panelId.path` — field of that panel's current selection.
   - `input` — value from an action's `prompt`.
+  - `opt.id` — an option of the panel (or content entry) the template belongs to; `panelId.opt.id` — a list panel's option (see `options`). An option with a `flag` renders as one optional argument, or nothing when unset.
 - `path` = dotted fields and numeric indexes (`fields.0`, `containers.0.name`). No functions, pipes, conditionals.
 - `\{{` is a literal `{{` — for commands that use Go templates themselves, e.g. `docker ps --format '\{{.Names}}'`.
 - **Every substitution into a command is shell-quoted.** In `label`/`columns` (display) values are inserted raw.

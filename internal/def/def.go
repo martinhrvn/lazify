@@ -85,11 +85,12 @@ type Panel struct {
 	Default  string   // a select's initial choice (key, else label)
 	Remember bool     // restore the selected row on the next run (selects: by default)
 	Refresh  time.Duration
-	Mark     *Mark  // which rows to highlight as current; nil = none
-	Style    *Style // decorates the label ({value, map})
-	Format   string // formats the label
-	RowStyle *Style // decorates the whole row ({value, map})
-	Side     string // left | center | right
+	Mark     *Mark     // which rows to highlight as current; nil = none
+	Style    *Style    // decorates the label ({value, map})
+	Format   string    // formats the label
+	RowStyle *Style    // decorates the whole row ({value, map})
+	Options  []*Option // set by the user (o); {{opt.id}} here, {{panel.opt.id}} elsewhere
+	Side     string    // left | center | right
 	Size     Size
 	// Content makes this a content panel: what to show, keyed by the active
 	// list panel's id or "default". Nil for list panels.
@@ -130,7 +131,8 @@ type Column struct {
 
 // Content is what a content panel shows for one active panel: a set of tabs.
 type Content struct {
-	Tabs []*Tab
+	Options []*Option // set by the user (o), read by the tabs as {{opt.id}}
+	Tabs    []*Tab
 }
 
 // Tab is one tab of a content panel.
@@ -269,6 +271,7 @@ type rawPanel struct {
 	Style    yaml.Node             `yaml:"style"`
 	Format   string                `yaml:"format"`
 	RowStyle yaml.Node             `yaml:"row_style"`
+	Options  []rawOption           `yaml:"options"`
 }
 
 type rawColumn struct {
@@ -279,7 +282,8 @@ type rawColumn struct {
 }
 
 type rawContent struct {
-	Tabs []rawTab `yaml:"tabs"`
+	Tabs    []rawTab    `yaml:"tabs"`
+	Options []rawOption `yaml:"options"`
 }
 
 type rawTab struct {
@@ -413,7 +417,9 @@ func (v *validator) mapKeys(path ...any) []string {
 // refRules says which kinds of reference a template may contain.
 type refRules struct {
 	row, input, panels bool
-	self               string // panel that must not be referenced (its own source)
+	self               string    // panel that must not be referenced (its own source)
+	opts               []*Option // the options {{opt.x}} can read
+	optsOwner          string    // "panel" or "content entry"; "" = options can't be used here
 }
 
 func (v *validator) template(line int, what, src string, d *Definition, r refRules) (*tmpl.Template, []string) {
@@ -435,16 +441,29 @@ func (v *validator) template(line int, what, src string, d *Definition, r refRul
 			}
 		case tmpl.ScopeCtx:
 			v.errorf(line, "%s: {{%s}}: context was replaced by select panels; use {{%s.line}}", what, ref, ref.Path[0])
+		case tmpl.ScopeOpt:
+			switch {
+			case r.optsOwner == "" && r.self == "" && !r.row:
+				v.errorf(line, "%s: {{%s}}: options belong to a panel; use {{panel.opt.%s}}", what, ref, ref.Path[0])
+			case len(r.opts) == 0:
+				v.errorf(line, "%s: {{%s}}: this %s has no options", what, ref, or(r.optsOwner, "panel"))
+			case findOption(r.opts, ref.Path[0]) == nil:
+				v.errorf(line, "%s: {{%s}}: unknown option %q (have: %s)", what, ref, ref.Path[0], optionIDs(r.opts))
+			}
 		default:
+			target := d.Panel(ref.Scope)
 			switch {
 			case !r.panels:
 				v.errorf(line, "%s: {{%s}}: only ctx references are allowed here", what, ref)
 			case ref.Scope == r.self:
 				v.errorf(line, "%s: panel references itself ({{%s}})", what, ref)
-			case d.Panel(ref.Scope) == nil:
+			case target == nil:
 				v.errorf(line, "%s: unknown panel %q", what, ref.Scope)
-			case d.Panel(ref.Scope).IsContent():
+			case target.IsContent():
 				v.errorf(line, "%s: {{%s}}: %s is a content panel and has no rows", what, ref, ref.Scope)
+			case len(ref.Path) > 0 && ref.Path[0] == tmpl.ScopeOpt && len(target.Options) > 0 &&
+				(len(ref.Path) != 2 || findOption(target.Options, ref.Path[1]) == nil):
+				v.errorf(line, "%s: {{%s}}: panel %s has no option %q", what, ref, ref.Scope, strings.Join(ref.Path[1:], "."))
 			case !slices.Contains(deps, ref.Scope):
 				deps = append(deps, ref.Scope)
 			}
@@ -488,7 +507,7 @@ func (v *validator) build(raw *rawDef) *Definition {
 		case !idRe.MatchString(rp.ID):
 			v.errorf(line, "panel %s: invalid id (use letters, digits, _ and -)", rp.ID)
 			continue
-		case rp.ID == tmpl.ScopeCtx || rp.ID == tmpl.ScopeInput || rp.ID == "default":
+		case rp.ID == tmpl.ScopeCtx || rp.ID == tmpl.ScopeInput || rp.ID == tmpl.ScopeOpt || rp.ID == "default":
 			v.errorf(line, "panel %s: id is reserved", rp.ID)
 			continue
 		case d.Panel(rp.ID) != nil:
@@ -504,6 +523,23 @@ func (v *validator) build(raw *rawDef) *Definition {
 			p.Content = map[string]*Content{}
 		}
 		d.Panels = append(d.Panels, p)
+	}
+
+	// Options next, so {{panel.opt.x}} can be checked wherever it appears.
+	for i, rp := range raw.Panels {
+		p := d.Panel(rp.ID)
+		if p == nil || len(rp.Options) == 0 {
+			continue
+		}
+		line, what := v.line("panels", i, "options"), "panel "+p.ID
+		switch {
+		case rp.Content != nil:
+			v.errorf(line, "%s: options go under each content entry (content: {<panel>: {options, tabs}})", what)
+		case rp.Select.Kind != 0 && rp.Select.Value != "false":
+			v.errorf(line, "%s: options are not supported on select panels", what)
+		default:
+			p.Options = v.options(rp.Options, what, d, "panels", i, "options")
+		}
 	}
 
 	// Env may reference panels (select panels, in practice), so it is checked
@@ -617,18 +653,18 @@ func (v *validator) build(raw *rawDef) *Definition {
 		if err := raw.Actions.Decode(&globals); err != nil {
 			v.errorf(v.line("actions"), "actions: %v", err)
 		}
-		d.Actions = v.actions(d, globals, "global action", "actions")
+		d.Actions = v.actions(d, globals, "global action", nil, "actions")
 	}
 	for i, rp := range raw.Panels {
 		if p := d.Panel(rp.ID); p != nil && p.Actions == nil && len(rp.Actions) > 0 {
-			p.Actions = v.actions(d, rp.Actions, "panel "+p.ID+": action", "panels", i, "actions")
+			p.Actions = v.actions(d, rp.Actions, "panel "+p.ID+": action", p.Options, "panels", i, "actions")
 		}
 	}
 	return d
 }
 
 // actions validates one list of actions (global, or one panel's) found at path.
-func (v *validator) actions(d *Definition, raws []rawAction, what string, path ...any) []*Action {
+func (v *validator) actions(d *Definition, raws []rawAction, what string, opts []*Option, path ...any) []*Action {
 	var out []*Action
 	seen := map[string]bool{}
 	for ai, ra := range raws {
@@ -648,7 +684,7 @@ func (v *validator) actions(d *Definition, raws []rawAction, what string, path .
 		if ra.Cmd == "" {
 			v.errorf(al, "%s: cmd is required", w)
 		} else {
-			a.Cmd, _ = v.template(al, w, ra.Cmd, d, refRules{row: true, panels: true, input: true})
+			a.Cmd, _ = v.template(al, w, ra.Cmd, d, refRules{row: true, panels: true, input: true, opts: opts, optsOwner: "panel"})
 			v.continuation(al, w, ra.Cmd)
 			if a.Cmd != nil && a.Prompt == "" && slices.ContainsFunc(a.Cmd.Refs(), func(r tmpl.Ref) bool {
 				return r.Scope == tmpl.ScopeInput
@@ -729,7 +765,7 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 		v.errorf(v.line("panels", i), "%s: source is required (or values, or content for a content panel)", what)
 	default:
 		p.Source, p.Deps = v.template(at("source"), what+": source", rp.Source, d,
-			refRules{panels: true, self: p.ID})
+			refRules{panels: true, self: p.ID, opts: p.Options, optsOwner: "panel"})
 		v.continuation(at("source"), what+": source", rp.Source)
 	}
 
@@ -853,7 +889,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 				continue
 			}
 		}
-		c := &Content{}
+		c := &Content{Options: v.options(rp.Content[key].Options, what+": content "+key, d, "panels", i, "content", key, "options")}
 		for ti, rt := range rp.Content[key].Tabs {
 			tl := v.line("panels", i, "content", key, "tabs", ti)
 			tw := fmt.Sprintf("%s: content %s: tab %q", what, key, rt.Name)
@@ -864,7 +900,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 			if rt.Cmd == "" {
 				v.errorf(tl, "%s: cmd is required", tw)
 			} else {
-				tab.Cmd, tab.Deps = v.template(tl, tw, rt.Cmd, d, refRules{row: true, panels: true})
+				tab.Cmd, tab.Deps = v.template(tl, tw, rt.Cmd, d, refRules{row: true, panels: true, opts: c.Options, optsOwner: "content entry"})
 				v.continuation(tl, tw, rt.Cmd)
 			}
 			if tab.Mode != "once" && tab.Mode != "stream" {

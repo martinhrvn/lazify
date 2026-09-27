@@ -174,3 +174,30 @@ func TestRefString(t *testing.T) {
 		}
 	}
 }
+
+func TestOptRefs(t *testing.T) {
+	tp := MustParse("{{opt.since}} {{commits.opt.since}}")
+	want := []Ref{{Scope: ScopeOpt, Path: []string{"since"}}, {Scope: "commits", Path: []string{"opt", "since"}}}
+	if got := tp.Refs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Refs() = %#v", got)
+	}
+	for _, in := range []string{"{{opt}}", "{{opt.a.b}}"} {
+		if _, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) succeeded, want error (use opt.<name>)", in)
+		}
+	}
+}
+
+// An Arg is an optional argument: quoted when set, nothing at all when empty
+// (so an unset --author= doesn't leave an empty ” argument behind).
+func TestRenderArg(t *testing.T) {
+	tp := MustParse("git log {{opt.author}} {{opt.merges}} -n {{opt.max}}")
+	r := mapResolver{"opt": map[string]any{"author": Arg("--author=Jane Doe"), "merges": Arg(""), "max": "200"}}
+	got, err := tp.Render(r, Shell)
+	if want := "git log '--author=Jane Doe'  -n 200"; err != nil || got != want {
+		t.Errorf("Shell = %q, %v; want %q", got, err, want)
+	}
+	if got, _ := MustParse("{{opt.author}}").Render(r, Display); got != "--author=Jane Doe" {
+		t.Errorf("Display = %q", got)
+	}
+}

@@ -25,6 +25,7 @@ const (
 	modalConfirm
 	modalPrompt
 	modalFilter
+	modalOptions
 )
 
 type toastKind int
@@ -125,6 +126,8 @@ func (m *Model) setToast(kind toastKind, text string) int {
 func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	k := msg.String()
 	switch m.modal {
+	case modalOptions:
+		return m.optionsKey(msg)
 	case modalHelp:
 		switch k {
 		case "esc", "?", "q":
@@ -182,13 +185,15 @@ var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
 	{"click", "focus panel, select row (again: enter)"}, {"wheel", "move / scroll"},
-	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows"}, {"?", "help"}, {"q", "quit"},
+	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows"}, {"o", "options (panel and content)"}, {"?", "help"}, {"q", "quit"},
 }
 
 // statusLine is the bottom line: an open prompt or confirmation, otherwise
 // the last action's toast followed by as many key hints as fit and "? more".
 func (m Model) statusLine() string {
 	switch m.modal {
+	case modalOptions:
+		return ansi.Truncate(styleDim.Render("options: enter apply · esc cancel"), m.width, "…")
 	case modalPrompt, modalFilter:
 		return ansi.Truncate(m.input.View(), m.width, "…")
 	case modalConfirm:
@@ -236,6 +241,9 @@ func (m Model) statusLine() string {
 	}
 	if !m.eng.IsContent(m.eng.Focused()) {
 		add("/", "filter")
+	}
+	if len(m.eng.OptionsInEffect()) > 0 {
+		add("o", "options")
 	}
 	if _, popup := m.eng.Popup(); !popup && len(m.eng.Tabs(m.eng.FocusedSlot())) > 1 {
 		add("[/]", "tabs")

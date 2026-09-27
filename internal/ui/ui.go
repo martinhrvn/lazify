@@ -58,6 +58,7 @@ type Model struct {
 	frame       int                                       // spinner animation frame
 	spinning    bool                                      // a spinner tick is scheduled
 	regions     *[]region                                 // where View drew each box, for mouse hit-testing
+	form        *optionsForm                              // the open options form (modalOptions)
 	width       int
 	height      int
 }
@@ -248,6 +249,8 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m.modal = modalHelp
 		m.helpVP.reset(false)
+	case "o":
+		return m.openOptions()
 	case "/":
 		if f := m.eng.Focused(); !m.eng.IsContent(f) {
 			m.modal = modalFilter
@@ -325,6 +328,9 @@ func (m Model) View() string {
 		bw, bh := lipgloss.Width(pb), lipgloss.Height(pb)
 		*m.regions = append(*m.regions, region{id: pv.ID, popup: true, picker: pv.Picker,
 			x: max(0, (m.width-bw)/2), y: max(0, (m.height-bh)/2), w: bw, h: bh})
+	}
+	if m.modal == modalOptions {
+		view = overlay(view, m.optionsBox(), m.width)
 	}
 	if m.modal == modalHelp {
 		view = overlay(view, m.helpBox(m.width, m.height), m.width)
@@ -537,6 +543,7 @@ func (m Model) contentParts(id string) (title string, head, body []string, stale
 			}
 		}
 		title = strings.Join(tabs, " │ ")
+		title += optionTitle(v.Options)
 	}
 	switch {
 	case v.Live:

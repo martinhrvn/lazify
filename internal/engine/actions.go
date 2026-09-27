@@ -72,7 +72,7 @@ func (e *Engine) RenderAction(ref ActionRef, input string) (runner.Request, erro
 		rowPanel = ref.Panel
 	}
 	row, _ := e.selection(rowPanel)
-	base := e.resolver(row)
+	base := e.optResolver(ref.Panel, row)
 	cmd, err := ref.Action.Cmd.Render(resolverFunc(func(r tmpl.Ref) (any, bool) {
 		if r.Scope == tmpl.ScopeInput {
 			return input, true

@@ -23,11 +23,12 @@ const Debounce = 150 * time.Millisecond
 
 // Run asks the caller to execute a command and report it via Finished(ID, ...).
 type Run struct {
-	ID     uint64
-	Panel  string // the panel it is for (list or content panel)
-	Stream bool   // long-running: use Runner.Stream and report chunks via StreamData
-	Mark   bool   // the panel's mark command (see Panel.Mark)
-	Req    runner.Request
+	ID      uint64
+	Panel   string // the panel it is for (list or content panel)
+	Stream  bool   // long-running: use Runner.Stream and report chunks via StreamData
+	Mark    bool   // the panel's mark command (see Panel.Mark)
+	Choices bool   // lists an option's choices (see OpenOptions)
+	Req     runner.Request
 }
 
 // Effects is what the caller must do after an engine call.
@@ -46,12 +47,13 @@ type PanelView struct {
 	Columns [][]string // per row, rendered column values
 	Cursor  int
 	Loading bool
-	Stale   bool   // rows shown are not (yet) for the current selection
-	Err     string // last run's error
-	Blocked string // why the panel cannot run
-	Marked  []bool // per row, when the panel has a mark
-	MarkErr string // why the mark command failed
-	Filter  string // the active filter ("" = none)
+	Stale   bool     // rows shown are not (yet) for the current selection
+	Err     string   // last run's error
+	Blocked string   // why the panel cannot run
+	Marked  []bool   // per row, when the panel has a mark
+	MarkErr string   // why the mark command failed
+	Filter  string   // the active filter ("" = none)
+	Options []string // options set away from their defaults, as id=value (see options.go)
 	// Decorations from styles, parallel to Lines / Columns (zero = none).
 	LineDeco []def.Deco
 	CellDeco [][]def.Deco
@@ -86,10 +88,12 @@ type panelState struct {
 
 // Engine holds the app state for one definition.
 type Engine struct {
-	def    *def.Definition
-	set    map[string]string // initial select choices (--set)
-	recall map[string]string // rows remembered from the last run (Recall)
-	panels map[string]*panelState
+	def     *def.Definition
+	set     map[string]string            // initial select choices (--set)
+	recall  map[string]string            // rows remembered from the last run (Recall)
+	opts    map[string]map[string]string // option values the user set, by owner (see options.go)
+	choices map[string]*choiceState      // option choices from a command, by owner+"\x00"+option
+	panels  map[string]*panelState
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
 	cache      map[string][]rows.Row
@@ -118,6 +122,8 @@ func New(d *def.Definition, set map[string]string) *Engine {
 		cache:   map[string][]rows.Row{},
 		tabIdx:  map[string]int{},
 		dcache:  map[string][]string{},
+		opts:    map[string]map[string]string{},
+		choices: map[string]*choiceState{},
 		mcache:  map[string]map[string]bool{},
 		views:   map[string]*viewState{},
 		stacks:  map[string][]string{},
@@ -158,6 +164,9 @@ func (e *Engine) Start() Effects {
 
 // Finished applies a run's result. Results of superseded runs are ignored.
 func (e *Engine) Finished(id uint64, stdout []byte, runErr error) Effects {
+	if e.choicesFinished(id, stdout, runErr) {
+		return e.take()
+	}
 	for _, v := range e.views {
 		if id != 0 && id == v.runID {
 			e.contentFinished(v, stdout, runErr)
@@ -289,6 +298,9 @@ func (e *Engine) evaluate(ps *panelState, run bool) {
 		return
 	}
 	for _, dep := range ps.def.Deps {
+		if !needsSelection(ps.def.Source, dep) {
+			continue // reads only dep's options
+		}
 		d := e.panels[dep]
 		if d.runID != 0 || d.pending {
 			e.cancel(ps)
@@ -338,7 +350,7 @@ func (e *Engine) render(ps *panelState) (string, bool) {
 	if ps.def.Source == nil {
 		return "", false // a values panel
 	}
-	cmd, err := ps.def.Source.Render(e.resolver(nil), tmpl.Shell)
+	cmd, err := ps.def.Source.Render(e.optResolver(ps.def.ID, nil), tmpl.Shell)
 	if err != nil {
 		e.cancel(ps)
 		ps.pending, ps.err = false, err.Error()
@@ -519,6 +531,7 @@ func (e *Engine) view(id string, list bool) PanelView {
 		v.Cursor = ps.pos(ps.cursor)
 	}
 	v.Filter = ps.filter
+	v.Options = e.optionSummary(id)
 	return v
 }
 
@@ -555,6 +568,9 @@ func (e *Engine) resolver(row rows.Row) tmpl.Resolver {
 		case tmpl.ScopeCtx, tmpl.ScopeInput:
 			return nil, false
 		default:
+			if v, ok := e.panelOption(ref); ok {
+				return v, true
+			}
 			sel, ok := e.selection(ref.Scope)
 			if !ok {
 				return nil, false

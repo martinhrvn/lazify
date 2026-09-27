@@ -45,6 +45,9 @@ func (m Model) panelBox(id string, crumbs []string, w, h int) (string, []string)
 		if f := m.eng.Filter(id); f != "" {
 			title += styleDim.Render(" /" + f)
 		}
+		if o := m.eng.View(id).Options; len(o) > 0 {
+			title += optionTitle(o)
+		}
 	}
 	if len(crumbs) > 1 {
 		title = strings.Join(crumbs[:len(crumbs)-1], " › ") + " › " + title

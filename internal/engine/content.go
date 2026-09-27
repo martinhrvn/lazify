@@ -30,7 +30,8 @@ type ContentView struct {
 	// Live: a stream is running. Ended: the stream has exited.
 	Live, Ended bool
 	Err         string
-	Empty       string // why there is nothing to show
+	Empty       string   // why there is nothing to show
+	Options     []string // the entry's options set away from their defaults (id=value)
 }
 
 // viewState is what one content panel shows: the active tab of its entry for
@@ -183,6 +184,9 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 	}
 	needs = append(needs, e.def.EnvDeps...) // every command runs with the env
 	for _, dep := range append(needs, t.Deps...) {
+		if !slices.Contains(needs, dep) && !needsSelection(t.Cmd, dep) {
+			continue // reads only dep's options
+		}
 		dp := e.panels[dep]
 		if dp.runID != 0 || dp.pending {
 			e.cancelView(v)
@@ -197,7 +201,7 @@ func (e *Engine) evaluateView(id string, v *viewState, run bool) {
 		}
 	}
 	sel, _ := e.selection(e.active)
-	cmd, err := t.Cmd.Render(e.resolver(sel), tmpl.Shell)
+	cmd, err := t.Cmd.Render(e.optResolver(EntryOwner(id, entry), sel), tmpl.Shell)
 	if err != nil {
 		e.cancelView(v)
 		v.pending, v.err = false, err.Error()
@@ -353,6 +357,8 @@ func (e *Engine) ContentView(id string) ContentView {
 	if v.partial != "" {
 		cv.Lines = append(append([]string(nil), v.lines...), cleanLines(v.partial)...)
 	}
+	entry, _ := e.entry(id)
+	cv.Options = e.optionSummary(EntryOwner(id, entry))
 	for _, t := range tabs {
 		cv.Tabs = append(cv.Tabs, t.Name)
 	}

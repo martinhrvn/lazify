@@ -45,6 +45,9 @@ func (h *harness) apply(fx Effects) {
 	}
 	for _, r := range fx.Runs {
 		slot := r.Panel
+		if r.Choices {
+			slot += ":choices"
+		}
 		if r.Mark {
 			slot += ":mark"
 		}
