@@ -131,12 +131,14 @@ panels:
   - id: main
     content:
       services:
-        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
+        options: # o: the window, and a CloudWatch filter pattern (e.g. timeout, "user 42", { $.status = 500 })
+          - { id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }
+          - { id: filter, title: Filter, flag: --filter-pattern= }
         tabs:
           - {
               name: Logs,
               mode: stream,
-              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}}',
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}} {{opt.filter}}',
             }
           - {
               name: Errors,
@@ -149,12 +151,14 @@ panels:
             }
           - { name: JSON, cmd: "echo {{.}}", format: json }
       tasks:
-        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
+        options: # o: the window, and a CloudWatch filter pattern (e.g. timeout, "user 42", { $.status = 500 })
+          - { id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }
+          - { id: filter, title: Filter, flag: --filter-pattern= }
         tabs:
           - {
               name: Logs,
               mode: stream,
-              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}}',
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}} {{opt.filter}}',
             }
           - {
               name: Errors,

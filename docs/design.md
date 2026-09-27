@@ -271,12 +271,14 @@ panels:
   - id: main
     content:
       services:
-        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
+        options: # o: the window, and a CloudWatch filter pattern (e.g. timeout, "user 42", { $.status = 500 })
+          - { id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }
+          - { id: filter, title: Filter, flag: --filter-pattern= }
         tabs:
           - {
               name: Logs,
               mode: stream,
-              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}}',
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --since {{opt.since}} {{opt.filter}}',
             }
           - {
               name: Errors,
@@ -289,12 +291,14 @@ panels:
             }
           - { name: JSON, cmd: "echo {{.}}", format: json }
       tasks:
-        options: [{ id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }] # o
+        options: # o: the window, and a CloudWatch filter pattern (e.g. timeout, "user 42", { $.status = 500 })
+          - { id: since, title: Logs since, values: [15m, 1h, 6h, 1d, 7d], default: 1h }
+          - { id: filter, title: Filter, flag: --filter-pattern= }
         tabs:
           - {
               name: Logs,
               mode: stream,
-              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}}',
+              cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --since {{opt.since}} {{opt.filter}}',
             }
           - {
               name: Errors,
@@ -416,7 +420,7 @@ intended continuation would run as a separate command (e.g. inside `$(...)`).
   a popup is drawn centered over the UI and keeps focus (`tab`/`1-9` do nothing) until `esc`.
   Esc closes the top popup or picker, else clears the focused panel's filter, else leaves the focused
   slot's deepest level, else dismisses an action error.
-- A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough). Streams
+- A content panel = tab bar (its title) + scrollable viewport (ANSI passthrough), with a **scroll bar** (┃ in the right border) when it doesn't fit — list panels too. Streams
   follow the tail: scrolling up pauses following, scrolling back to the bottom resumes it.
   Tabs expand to 4 spaces and `\r` progress lines keep only their final state.
 - Panel numbers, `tab` order and `1..9` follow the screen: left, center, right, top→bottom.
@@ -445,6 +449,8 @@ The lazygit look is `layout: {focus: equal}` plus `size: fit` on a status panel.
 | `[` / `]` | previous / next tab: the focused slot's panel tabs, else the (focused or first) content panel's tabs |
 | `ctrl-d/u`, `J/K` | scroll content panel |
 | `/` | filter the focused list panel (or an open picker) as you type: case-insensitive, every space-separated term must match the row's text; Enter keeps it (title shows `/text`), Esc clears it. The cursor moves over matching rows only; with no match the panel has no selection. |
+| `/` on a content panel | **search** it like less, as you type: plain text, case-insensitive unless the query has a capital; matches are highlighted in place (colours kept), the current one differently; the title shows `/text 3/12`. Enter keeps it, Esc clears it. |
+| `n`/`N`, `g`/`G` | on a focused content panel: next/previous match (wrapping), top/bottom (bottom resumes following a stream). Elsewhere they are free for actions. |
 | `r` | refresh focused panel |
 | `1..9` on a select | open its picker (Enter chooses, Esc cancels; focus stays where it was) |
 | `?` | help overlay: focused panel's actions, globals, navigation |

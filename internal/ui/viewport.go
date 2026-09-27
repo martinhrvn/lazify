@@ -37,3 +37,10 @@ func (v *viewport) window(lines []string, h int) []string {
 	}
 	return lines[v.offset:min(len(lines), v.offset+h)]
 }
+
+// show scrolls so line (of n) is in view, a third from the top; following
+// stops, as when scrolling up.
+func (v *viewport) show(line, n, h int) {
+	v.follow = false
+	v.offset = max(0, min(max(0, n-h), line-h/3))
+}

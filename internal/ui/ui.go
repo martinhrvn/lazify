@@ -64,6 +64,7 @@ type Model struct {
 	missed      map[string]bool                           // panels whose refresh fell while unfocused
 	self        string                                    // lazify's executable, for the pager helper
 	noFloat     bool                                      // --no-float: interactive actions take over the terminal
+	search      map[string]*contentSearch                 // per content panel (/ while it is focused)
 	width       int
 	height      int
 }
@@ -88,6 +89,7 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		vpIDs:       map[string]string{},
 		missed:      map[string]bool{},
 		self:        executable(),
+		search:      map[string]*contentSearch{},
 		regions:     &[]region{},
 		debounce:    engine.Debounce,
 		toastTTL:    3 * time.Second,
@@ -223,6 +225,27 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if k == " " {
 		k = "space" // the name definitions use
 	}
+	// A focused content panel reads like less: g/G, n/N, esc clears a search.
+	if f := m.eng.Focused(); m.eng.IsContent(f) {
+		switch k {
+		case "g":
+			m.scrollContent(f, -1<<30, false)
+			return m, nil
+		case "G":
+			m.scrollContent(f, 1<<30, false)
+			return m, nil
+		case "n", "N":
+			if m.activeSearch(f) != nil {
+				m.jumpMatch(f, map[string]int{"n": 1, "N": -1}[k])
+				return m, nil
+			}
+		case "esc":
+			if m.activeSearch(f) != nil {
+				delete(m.search, f)
+				return m, nil
+			}
+		}
+	}
 	switch k {
 	case "q", "ctrl+c":
 		for _, cancel := range m.cancels {
@@ -277,6 +300,11 @@ func (m Model) key(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.modal = modalFilter
 			m.input.Prompt = "/"
 			m.input.SetValue(m.eng.Filter(f))
+			m.input.Focus()
+		} else {
+			m.modal = modalSearch
+			m.input.Prompt = "/"
+			m.input.SetValue("")
 			m.input.Focus()
 		}
 	case "enter":
@@ -382,7 +410,8 @@ func (m Model) column(ids []string, x, w, h int) string {
 			crumbs[0] = m.tabBar(tabs, m.eng.ActiveTab(id))
 		}
 		title, lines := m.panelBox(m.eng.Top(id), crumbs, w, hs[i])
-		boxes[i] = box(num+title, lines, w, hs[i], m.eng.Top(id) == m.eng.Focused())
+		total, offset := m.scrollOf(m.eng.Top(id), hs[i])
+		boxes[i] = scrollBox(num+title, lines, w, hs[i], m.eng.Top(id) == m.eng.Focused(), total, offset)
 		y := 0
 		for _, b := range boxes[:i] {
 			y += strings.Count(b, "\n") + 1
@@ -540,13 +569,30 @@ func (m Model) listLines(v engine.PanelView, focused bool, w, h int) []string {
 func (m Model) contentBox(id string, h int) (string, []string) {
 	title, head, body, stale := m.contentParts(id)
 	lines := slices.Clone(head)
-	for _, l := range m.viewport(id).window(body, max(0, h-len(head))) {
+	vp := m.viewport(id)
+	s := m.activeSearch(id)
+	for i, l := range vp.window(body, max(0, h-len(head))) {
 		if stale {
 			l = styleDim.Render(ansi.Strip(l))
+		}
+		if s != nil {
+			l = highlight(l, s.query, vp.offset+i == s.cur)
 		}
 		lines = append(lines, l)
 	}
 	return title, lines
+}
+
+// scrollOf is what panel id's scroll bar shows at inner height h: its total
+// lines and the first one on screen.
+func (m Model) scrollOf(id string, h int) (total, offset int) {
+	if m.eng.IsContent(id) {
+		_, head, body, _ := m.contentParts(id)
+		return len(head) + len(body), m.viewport(id).offset
+	}
+	v := m.eng.View(id)
+	head, off := listGeometry(v, h)
+	return head + len(v.Lines) + len(v.Columns), off
 }
 
 // contentParts splits a content panel into its title, fixed head lines
@@ -572,6 +618,7 @@ func (m Model) contentParts(id string) (title string, head, body []string, stale
 	case v.Ended:
 		title += styleDim.Render(" ended")
 	}
+	title += m.searchTitle(id, v.Lines)
 
 	if v.Err != "" {
 		errLines := strings.Split(strings.TrimSpace(v.Err), "\n")
@@ -630,6 +677,12 @@ func (m *Model) syncViewports() {
 // box draws lines in a rounded border of total width w and inner height h,
 // with the title embedded in the top border.
 func box(title string, lines []string, w, h int, focused bool) string {
+	return scrollBox(title, lines, w, h, focused, 0, 0)
+}
+
+// scrollBox is box with a scroll bar in the right border when total lines
+// don't fit in h (offset: the first one shown).
+func scrollBox(title string, lines []string, w, h int, focused bool, total, offset int) string {
 	color := colorBorder
 	if focused {
 		color = colorFocus
@@ -648,13 +701,24 @@ func box(title string, lines []string, w, h int, focused bool) string {
 		bs.Render(strings.Repeat("─", max(0, innerW-1-ansi.StringWidth(title)))+"╮")
 
 	var b strings.Builder
+	// The thumb: its size is the visible share, its place the scroll position.
+	thumbFrom, thumbTo := 0, 0
+	if total > h && h > 0 {
+		size := max(1, h*h/total)
+		pos := min(h-size, max(0, offset*(h-size)/max(1, total-h)))
+		thumbFrom, thumbTo = pos, pos+size
+	}
 	b.WriteString(top)
 	for i := range h {
 		line := ""
 		if i < len(lines) {
 			line = ansi.Truncate(lines[i], innerW, "…")
 		}
-		b.WriteString("\n" + bs.Render("│") + padRight(line, innerW) + bs.Render("│"))
+		right := "│"
+		if i >= thumbFrom && i < thumbTo {
+			right = "┃"
+		}
+		b.WriteString("\n" + bs.Render("│") + padRight(line, innerW) + bs.Render(right))
 	}
 	b.WriteString("\n" + bs.Render("╰"+strings.Repeat("─", innerW)+"╯"))
 	return b.String()

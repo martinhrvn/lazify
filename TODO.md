@@ -27,7 +27,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `once` tabs: cached by command, debounced on cursor moves, `format: json`, errors shown
 - [x] `stream` tabs (live tail): incremental output, 10k-line buffer, killed on change, `r` restarts
 - [x] scrolling (`J`/`K`, `ctrl+d`/`ctrl+u`), follow mode for streams; reusable `ui/viewport.go`
-- [ ] later: search in the main view, `g`/`G` top/bottom, wrap long lines toggle
+- [x] search in content panels (`/`, `n`/`N`, highlighted in place), `g`/`G`, scroll bars (content and lists)
+- [ ] later: wrap long lines toggle; regex search
 ## Content panels ✅ (replaces `detail:`)
 - [x] any panel can be a content panel: `content: {<list panel>|default: {tabs: [...]}}`
 - [x] shows content for the **active** (last focused list) panel; several content panels run independently
@@ -85,7 +86,7 @@ See `docs/design.md` §11 for milestone scope.
 - [x] terms match the displayed row text; cursor moves over matches only; no match = no selection
 - [x] re-applied after refreshes; title shows `/text`; `(no matches)`
 - [x] selects: `select: popup` (dialog) or `select: inline` (in place), never both
-- [ ] later: search in content panels; fuzzy matching
+- [ ] later: fuzzy matching in filters
 
 ## M5 ✅ — auto-refresh (columns, context as select panels, filter: done earlier)
 - [x] `refresh: <interval>` re-runs a panel while it's on screen and idle; quiet, cursor kept by key

@@ -431,8 +431,8 @@ func mainLines(t *testing.T, m tea.Model) []string {
 	t.Helper()
 	var out []string
 	for _, l := range strings.Split(screen(m), "\n") {
-		parts := strings.Split(l, "│")
-		if len(parts) >= 4 { // │left│ │main│
+		parts := strings.Split(strings.ReplaceAll(l, "┃", "│"), "│") // ┃: the scroll bar
+		if len(parts) >= 4 {                                         // │left│ │main│
 			out = append(out, strings.TrimRight(parts[3], " "))
 		}
 	}

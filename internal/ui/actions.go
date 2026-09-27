@@ -27,6 +27,7 @@ const (
 	modalPrompt
 	modalFilter
 	modalOptions
+	modalSearch
 )
 
 type toastKind int
@@ -143,6 +144,8 @@ func (m *Model) setToast(kind toastKind, text string) int {
 func (m Model) modalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	k := msg.String()
 	switch m.modal {
+	case modalSearch:
+		return m.searchKey(msg)
 	case modalOptions:
 		return m.optionsKey(msg)
 	case modalHelp:
@@ -202,7 +205,7 @@ var navHints = [][2]string{
 	{"j/k", "move"}, {"tab", "next panel"}, {"1-9", "focus panel"}, {"r", "refresh"},
 	{"[/]", "switch tab (panel or content)"}, {"J/K", "scroll content"}, {"ctrl+d/u", "page content"},
 	{"click", "focus panel, select row (again: enter)"}, {"wheel", "move / scroll"},
-	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows"}, {"o", "options (panel and content)"}, {"?", "help"}, {"q", "quit"},
+	{"enter", "open (drill down / popup)"}, {"esc", "back / close"}, {"/", "filter rows / search content"}, {"n/N", "next / previous match"}, {"g/G", "top / bottom of content"}, {"o", "options (panel and content)"}, {"?", "help"}, {"q", "quit"},
 }
 
 // statusLine is the bottom line: an open prompt or confirmation, otherwise
@@ -211,7 +214,7 @@ func (m Model) statusLine() string {
 	switch m.modal {
 	case modalOptions:
 		return ansi.Truncate(styleDim.Render("options: enter apply · esc cancel"), m.width, "…")
-	case modalPrompt, modalFilter:
+	case modalPrompt, modalFilter, modalSearch:
 		return ansi.Truncate(m.input.View(), m.width, "…")
 	case modalConfirm:
 		// The command on one line, cut to fit so the question stays visible.
@@ -258,6 +261,11 @@ func (m Model) statusLine() string {
 	}
 	if !m.eng.IsContent(m.eng.Focused()) {
 		add("/", "filter")
+	} else {
+		add("/", "search")
+		if m.activeSearch(m.eng.Focused()) != nil {
+			add("n/N", "next/prev match")
+		}
 	}
 	if len(m.eng.OptionsInEffect()) > 0 {
 		add("o", "options")

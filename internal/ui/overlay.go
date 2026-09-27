@@ -78,7 +78,8 @@ func (m Model) popupBox(pv engine.PopupView, bodyH int) string {
 		w, h = m.width, bodyH
 	}
 	title, lines := m.panelBox(pv.ID, pv.Crumbs, w, h-2)
-	return box(title, lines, w, h-2, true)
+	total, offset := m.scrollOf(pv.ID, h-2)
+	return scrollBox(title, lines, w, h-2, true, total, offset)
 }
 
 // tabBar renders a slot's panel tabs, the shown one highlighted.

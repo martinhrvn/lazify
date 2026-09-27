@@ -100,11 +100,12 @@ func TestLoadECSExample(t *testing.T) {
 	if a := d.Panel("tasks").Actions; len(a) != 1 {
 		t.Errorf("tasks should have the follow action: %+v", a)
 	}
-	// The log window is an option of the log entries, not hardcoded.
+	// The log window and a filter pattern are options of the log entries.
 	for _, entry := range []string{"services", "tasks"} {
 		c := d.Panel("main").Content[entry]
-		if len(c.Options) != 1 || c.Options[0].ID != "since" || !strings.Contains(c.Tabs[0].Cmd.Source(), "--since {{opt.since}}") {
-			t.Errorf("%s logs should use the since option: %+v", entry, c.Options)
+		if len(c.Options) != 2 || c.Options[0].ID != "since" || c.Options[1].Flag != "--filter-pattern=" ||
+			!strings.Contains(c.Tabs[0].Cmd.Source(), "--since {{opt.since}} {{opt.filter}}") {
+			t.Errorf("%s logs should use the since and filter options: %+v", entry, c.Options)
 		}
 	}
 	if !d.Panel("clusters").Remember || !d.Panel("services").Remember {
