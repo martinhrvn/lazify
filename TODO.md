@@ -44,7 +44,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] background (toast ⟳/✓/✗), interactive (`tea.ExecProcess`), `confirm`, `prompt` → `{{input}}`
 - [x] after success: caches dropped, `refresh` panels (default: own panel) and content re-run
 - [x] hint bar (fits the width, `? more`) and `?` help overlay (reusable `overlay`)
-- [ ] later: full action output in a popup (`o`), multi-select / bulk actions, a spinner for running actions
+- [x] `pager:` actions (quitting the pager stops the command) and floating panes for interactive actions in tmux/zellij (`float: false`, `--no-float`)
+- [ ] later: full action output in a popup, multi-select / bulk actions, a spinner for running actions
 ## Marked rows ✅
 - [x] `mark: .path` (truthy row value) or `mark: {source, match}` (match value in the command's output lines)
 - [x] `*` gutter + accent colour; cursor starts on the first marked row until the user moves

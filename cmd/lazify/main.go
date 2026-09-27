@@ -25,6 +25,7 @@ const usage = `usage:
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   --no-mouse                             leave the mouse to the terminal (text selection)
   --no-remember                          start fresh and don't save choices (see below)
+  --no-float                             interactive actions take over the terminal (not a tmux/zellij float)
   lazify list                            list the apps in %[1]s
   lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
 
@@ -48,6 +49,13 @@ func configDir() string {
 }
 
 func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
+	if len(argv) > 0 && argv[0] == "__pager" { // internal: an action's pager (runner.PagerCommand)
+		if len(argv) != 3 {
+			fmt.Fprintln(stderr, "usage: lazify __pager <command> <pager>")
+			return 2
+		}
+		return runner.RunPager(argv[1], argv[2], stdout, stderr)
+	}
 	a, err := parseArgs(argv)
 	if err != nil || len(a.positional) == 0 {
 		if err != nil {
@@ -81,6 +89,9 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	m := ui.New(d, runner.Shell{}, a.set)
+	if a.noFloat {
+		m = m.NoFloat()
+	}
 	var recalled map[string]string
 	remember := d.Remembers() && !a.noRemember
 	if remember {
@@ -244,6 +255,7 @@ type args struct {
 	set        map[string]string
 	noMouse    bool // leave the mouse to the terminal (plain text selection)
 	noRemember bool // neither restore nor save remembered rows
+	noFloat    bool // interactive actions take over the terminal even in tmux/zellij
 }
 
 func parseArgs(argv []string) (args, error) {
@@ -252,6 +264,9 @@ func parseArgs(argv []string) (args, error) {
 		arg := argv[i]
 		var kv string
 		switch {
+		case arg == "--no-float":
+			a.noFloat = true
+			continue
 		case arg == "--no-remember":
 			a.noRemember = true
 			continue

@@ -24,6 +24,7 @@ type fakeRunner struct {
 	errs    map[string]error
 	streams map[string][]string
 	gap     time.Duration // pause between stream chunks
+	failAll error         // when set, every Run fails with it (after recording)
 	mu      sync.Mutex
 	ran     []string
 }
@@ -52,6 +53,9 @@ func (f *fakeRunner) Stream(_ context.Context, req runner.Request, onData func([
 
 func (f *fakeRunner) Run(_ context.Context, req runner.Request) (runner.Result, error) {
 	f.record(req.Cmd)
+	if f.failAll != nil {
+		return runner.Result{}, f.failAll
+	}
 	return runner.Result{Stdout: []byte(f.out[req.Cmd])}, f.errs[req.Cmd]
 }
 

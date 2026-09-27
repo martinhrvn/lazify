@@ -16,6 +16,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultPager is what `pager: true` pipes an action's output into: $LAZIFY_PAGER,
+// else less following the output (ctrl+c stops following, q quits).
+const DefaultPager = "${LAZIFY_PAGER:-less -R +F}"
+
 // DefaultTimeout applies to non-stream commands unless `timeout:` overrides it.
 const DefaultTimeout = 30 * time.Second
 
@@ -151,7 +155,9 @@ type Action struct {
 	Cmd     *tmpl.Template
 	Prompt  string
 	Confirm bool
-	Mode    string // background | interactive
+	Mode    string // background | interactive (a pager implies interactive)
+	Pager   string // pipe the output into this pager (DefaultPager for pager: true); quitting it stops cmd
+	Float   bool   // interactive: in a tmux popup / zellij floating pane when available (float: false opts out)
 	Refresh []string
 }
 
@@ -294,13 +300,15 @@ type rawTab struct {
 }
 
 type rawAction struct {
-	Key     string   `yaml:"key"`
-	Desc    string   `yaml:"desc"`
-	Cmd     string   `yaml:"cmd"`
-	Prompt  string   `yaml:"prompt"`
-	Confirm bool     `yaml:"confirm"`
-	Mode    string   `yaml:"mode"`
-	Refresh []string `yaml:"refresh"`
+	Key     string    `yaml:"key"`
+	Desc    string    `yaml:"desc"`
+	Cmd     string    `yaml:"cmd"`
+	Prompt  string    `yaml:"prompt"`
+	Confirm bool      `yaml:"confirm"`
+	Mode    string    `yaml:"mode"`
+	Refresh []string  `yaml:"refresh"`
+	Pager   yaml.Node `yaml:"pager"`
+	Float   yaml.Node `yaml:"float"`
 }
 
 var idRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
@@ -690,6 +698,32 @@ func (v *validator) actions(d *Definition, raws []rawAction, what string, opts [
 				return r.Scope == tmpl.ScopeInput
 			}) {
 				v.errorf(al, "%s: uses {{input}} but has no prompt", w)
+			}
+		}
+		switch p := ra.Pager; {
+		case p.Kind == 0 || p.Value == "false":
+		case p.Kind == yaml.ScalarNode && p.Value == "true":
+			a.Pager = DefaultPager
+		case p.Kind == yaml.ScalarNode && p.Tag == "!!str" && p.Value != "":
+			a.Pager = p.Value
+		default:
+			v.errorf(al, "%s: pager must be true or a command", w)
+		}
+		if a.Pager != "" {
+			if ra.Mode == "background" {
+				v.errorf(al, "%s: pager needs the terminal: leave out mode (or use interactive)", w)
+			}
+			a.Mode = "interactive"
+		}
+		a.Float = a.Mode == "interactive"
+		if ra.Float.Kind != 0 {
+			switch {
+			case a.Mode != "interactive":
+				v.errorf(al, "%s: float only applies to interactive and pager actions", w)
+			case ra.Float.Value != "true" && ra.Float.Value != "false":
+				v.errorf(al, "%s: float must be true or false", w)
+			default:
+				a.Float = ra.Float.Value == "true"
 			}
 		}
 		if a.Mode != "background" && a.Mode != "interactive" {

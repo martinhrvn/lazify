@@ -160,10 +160,12 @@ env: # every command runs with these; they follow the selects
     else set -- --log-stream-names "$prefix/$name/$which" "$@"
     fi
     aws logs tail "$group" --format short "$@" | jq -rR --unbuffered "$ECS_LOG_FORMAT"
-  # ECS_FOLLOW: a full-screen pager for a live tail (f); ctrl-c stops following, q quits.
-  ECS_FOLLOW: |
-    if command -v bat >/dev/null; then exec bat -l log --style=plain --paging=always --pager "less -R +F"
-    else exec less -R +F; fi
+  # ECS_COLOR: colours log levels with bat when it's installed. It is part of
+  # the command, not the pager: the pager must be what you quit (less), so that
+  # quitting it stops the tail.
+  ECS_COLOR: |
+    if command -v bat >/dev/null; then exec bat --color=always --paging=never -l log --style=plain
+    else exec cat; fi
   # One line per JSON log event: time LEVEL logger message {extra fields}, with
   # error stacks indented below. Bunyan/pino numeric levels and common string
   # levels are understood; other lines keep their text. aws prints UTC: times are
@@ -244,7 +246,7 @@ panels:
         }
     refresh: 10s
     actions: # read-only: f follows the logs live in a pager
-      - { key: f, desc: Follow logs, mode: interactive, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --follow --since 10m | sh -c "$ECS_FOLLOW"' }
+      - { key: f, desc: Follow logs, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinition}} service --follow --since 10m | sh -c "$ECS_COLOR"', pager: true } # less +F: ctrl-c stops following, q quits
 
   - id: tasks
     title: Tasks
@@ -264,7 +266,7 @@ panels:
           "*": { spinner: true, color: warn } # PENDING, PROVISIONING, STOPPING, …
       - { title: Started, value: "{{.startedAt}}", format: ago }
     actions:
-      - { key: f, desc: Follow logs, mode: interactive, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --follow --since 10m | sh -c "$ECS_FOLLOW"' }
+      - { key: f, desc: Follow logs, cmd: 'sh -c "$ECS_LOGS" ecs-logs {{.taskDefinitionArn}} {{.id}} --follow --since 10m | sh -c "$ECS_COLOR"', pager: true } # less +F: ctrl-c stops following, q quits
 
   - id: main
     content:
@@ -343,7 +345,7 @@ all `confirm:`; the sudo ones are `mode: interactive`. `examples/tail.yaml`,
 **Action** (top-level `actions:` list = global; `panels[].actions` = per panel): `key`, `desc`,
 `cmd`, `prompt` (asks for text → `{{input}}`), `confirm: bool` (shows the rendered command,
 `[y/N]`), `mode: background|interactive` (default background; interactive hands the terminal
-to the command), `refresh: [panel ids]` (default: the owning list panel; none for globals).
+to the command — inside tmux or zellij it opens in a **floating pane** instead: a tmux popup / zellij floating pane with the action's env; `float: false` or `--no-float` keeps the terminal), `pager: true|<command>` (pipe `cmd` into a pager — `$LAZIFY_PAGER`, else `less -R +F`; implies interactive. lazify runs the two so that **quitting the pager stops `cmd`** with its whole process group, even a quiet `tail -f`; the pager must be the program you quit, so put colourizers like `bat --paging=never` in `cmd`), `refresh: [panel ids]` (default: the owning list panel; none for globals).
 `{{.x}}` is the owning list panel's row, or the active panel's for globals and content-panel
 actions. After a successful action all caches are dropped, `refresh` panels re-run (after their
 inputs) and content panels re-run. Keys use Bubble Tea names (`D`, `ctrl+x`, `f5`) or `space`.
@@ -486,6 +488,7 @@ apps:
   arguments, everything in the config folder.
 - `--set panel=row` — the row a list panel starts on (overrides a remembered row and `default:`).
 - `--no-remember` — start without remembered rows and don't save them.
+- `--no-float` — interactive and pager actions take over the terminal even inside tmux or zellij.
 - `--no-mouse` — don't capture the mouse (keeps the terminal's own text selection).
 - Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 

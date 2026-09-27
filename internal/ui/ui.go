@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -61,6 +62,8 @@ type Model struct {
 	form        *optionsForm                              // the open options form (modalOptions)
 	unfocused   bool                                      // the terminal lost focus: auto-refresh pauses
 	missed      map[string]bool                           // panels whose refresh fell while unfocused
+	self        string                                    // lazify's executable, for the pager helper
+	noFloat     bool                                      // --no-float: interactive actions take over the terminal
 	width       int
 	height      int
 }
@@ -84,6 +87,7 @@ func New(d *def.Definition, r runner.Runner, ctx map[string]string) Model {
 		vps:         map[string]*viewport{},
 		vpIDs:       map[string]string{},
 		missed:      map[string]bool{},
+		self:        executable(),
 		regions:     &[]region{},
 		debounce:    engine.Debounce,
 		toastTTL:    3 * time.Second,
@@ -692,3 +696,18 @@ func (m Model) Recall(r map[string]string) { m.eng.Recall(r) }
 // Remembered returns the rows the remembering panels are on, to store for the
 // next run.
 func (m Model) Remembered() map[string]string { return m.eng.Remembered() }
+
+// executable is lazify's own path (for `lazify __pager`); "lazify" if unknown.
+func executable() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return "lazify"
+}
+
+// NoFloat makes interactive actions take over the terminal even inside tmux
+// or zellij (--no-float).
+func (m Model) NoFloat() Model {
+	m.noFloat = true
+	return m
+}

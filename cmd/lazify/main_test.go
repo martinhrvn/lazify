@@ -238,3 +238,20 @@ func TestRememberLoadsAndMerges(t *testing.T) {
 		t.Errorf("corrupt state: %v, %q", got, errOut.String())
 	}
 }
+
+func TestPagerHelper(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"__pager", "printf 'a\\nb\\n'", "cat"}, &out, &errOut, t.TempDir()); code != 0 || out.String() != "a\nb\n" {
+		t.Errorf("__pager: code %d, out %q, err %q", code, out.String(), errOut.String())
+	}
+	if code := run([]string{"__pager", "x"}, &out, &errOut, t.TempDir()); code != 2 {
+		t.Errorf("__pager needs two arguments: %d", code)
+	}
+}
+
+func TestNoFloatFlag(t *testing.T) {
+	a, err := parseArgs([]string{"ecs", "--no-float"})
+	if err != nil || !a.noFloat {
+		t.Errorf("args = %+v, %v", a, err)
+	}
+}

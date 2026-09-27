@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -82,15 +83,31 @@ func (m Model) trigger(ref engine.ActionRef) (Model, tea.Cmd) {
 	return m.execute(ref, req)
 }
 
-// execute runs a rendered action: interactive ones take over the terminal,
-// background ones run with a status-line toast.
+// execute runs a rendered action. Interactive ones (and pagers) float in a
+// tmux popup / zellij floating pane when lazify runs in one, else take over
+// the terminal; background ones run with a status-line toast.
 func (m Model) execute(ref engine.ActionRef, req runner.Request) (Model, tea.Cmd) {
 	done := func(err error) tea.Msg { return actionDoneMsg{ref: ref, err: err} }
+	if ref.Action.Pager != "" {
+		req.Cmd = runner.PagerCommand(m.self, req.Cmd, ref.Action.Pager)
+	}
+	r := m.runner
 	if ref.Action.Mode == "interactive" {
-		return m, m.execProcess(runner.Interactive(req), done)
+		fr, ok := runner.Float(req, ref.Desc())
+		if !ok || !ref.Action.Float || m.noFloat {
+			return m, m.execProcess(runner.Interactive(req), done)
+		}
+		m.setToast(toastRunning, "↗ "+ref.Desc())
+		return m, func() tea.Msg {
+			_, err := r.Run(context.Background(), fr)
+			var exit *runner.ExitError
+			if errors.As(err, &exit) && (exit.Code == 129 || exit.Code == 130 || exit.Code == 143) {
+				err = nil // the pane was closed (HUP, INT, TERM): that's how it ends
+			}
+			return done(err)
+		}
 	}
 	m.setToast(toastRunning, "⟳ "+ref.Desc()+"…")
-	r := m.runner
 	return m, func() tea.Msg {
 		_, err := r.Run(context.Background(), req)
 		return done(err)
