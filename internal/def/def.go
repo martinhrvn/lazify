@@ -83,6 +83,7 @@ type Panel struct {
 	Values   []string // rows written in the definition instead of a source
 	Select   string   // "popup" or "inline": its selection is chosen in a picker; "" = not a select
 	Default  string   // a select's initial choice (key, else label)
+	Remember bool     // restore the selected row on the next run (selects: by default)
 	Refresh  time.Duration
 	Mark     *Mark  // which rows to highlight as current; nil = none
 	Style    *Style // decorates the label ({value, map})
@@ -258,6 +259,7 @@ type rawPanel struct {
 	Values   []string              `yaml:"values"`
 	Select   yaml.Node             `yaml:"select"`
 	Default  string                `yaml:"default"`
+	Remember yaml.Node             `yaml:"remember"`
 	Refresh  string                `yaml:"refresh"`
 	Size     string                `yaml:"size"`
 	Side     string                `yaml:"side"`
@@ -593,6 +595,12 @@ func (v *validator) build(raw *rawDef) *Definition {
 			v.errorf(v.line("panels", i), "panel %s: side/size not allowed on a drill-in child (it uses %s's slot)", p.ID, p.Parent)
 		}
 	}
+	// Only rows you can land on at start are restored, not drill levels.
+	for i, rp := range raw.Panels {
+		if p := d.Panel(rp.ID); p != nil && p.Remember && p.Parent != "" {
+			v.errorf(v.line("panels", i, "remember"), "panel %s: remember: %s is only shown through Enter from %s, so its row isn't restored", p.ID, p.ID, p.Parent)
+		}
+	}
 	v.spreadEnvDeps(d)
 	v.order(d)
 	v.layout(d, raw.Layout)
@@ -735,6 +743,14 @@ func (v *validator) listPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	default:
 		v.errorf(at("select"), "%s: select must be true, popup or inline, got %q", what, mode)
 	}
+	p.Remember = p.IsSelect() // selects remember their choice unless told not to
+	switch r := rp.Remember.Value; {
+	case rp.Remember.Kind == 0:
+	case rp.Remember.Kind == yaml.ScalarNode && (r == "true" || r == "false"):
+		p.Remember = r == "true"
+	default:
+		v.errorf(at("remember"), "%s: remember must be true or false, got %q", what, r)
+	}
 
 	p.Rows, p.Split = rp.Rows, rp.Split
 	if rp.Rows != "" && rp.Split != "" {
@@ -817,7 +833,7 @@ func (v *validator) contentPanel(d *Definition, p *Panel, rp rawPanel, i int) {
 	}
 	for field, set := range map[string]bool{
 		"rows": rp.Rows != "", "split": rp.Split != "", "label": rp.Label != "",
-		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select.Kind != 0, "default": rp.Default != "", "values": len(rp.Values) > 0,
+		"columns": len(rp.Columns) > 0, "key": rp.Key != "", "children": rp.Children != "", "enter": rp.Enter.Kind != 0, "tab_of": rp.TabOf != "", "select": rp.Select.Kind != 0, "default": rp.Default != "", "values": len(rp.Values) > 0, "remember": rp.Remember.Kind != 0,
 		"refresh": rp.Refresh != "", "mark": rp.Mark.Kind != 0, "style": rp.Style.Kind != 0, "format": rp.Format != "", "row_style": rp.RowStyle.Kind != 0,
 	} {
 		if set {
@@ -1130,4 +1146,9 @@ func (v *validator) continuation(line int, what, cmd string) {
 			"in a folded (>) block a more-indented line keeps its newline; indent it like the other lines, or end the previous line with \\",
 			what, i+1, strings.Fields(t)[0])
 	}
+}
+
+// Remembers reports whether any panel restores its row between runs.
+func (d *Definition) Remembers() bool {
+	return slices.ContainsFunc(d.Panels, func(p *Panel) bool { return p.Remember })
 }

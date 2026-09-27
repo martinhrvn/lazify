@@ -19,4 +19,7 @@ lazify lint         # check every app
 Examples: `examples/git-lite.yaml` (git), `examples/ecs.yaml` (AWS ECS, read-only),
 `examples/nix.yaml` (NixOS generations, closures, flake inputs; `lazify examples/nix.yaml`).
 
+Choices (profile, region, flake, …) are remembered per app in `~/.local/state/lazify/<id>.yaml`;
+`--no-remember` starts fresh.
+
 Status: early development. See [docs/design.md](docs/design.md) and [TODO.md](TODO.md).

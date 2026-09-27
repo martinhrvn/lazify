@@ -16,6 +16,7 @@ import (
 	"github.com/martinhrvn/lazify/internal/catalog"
 	"github.com/martinhrvn/lazify/internal/def"
 	"github.com/martinhrvn/lazify/internal/runner"
+	"github.com/martinhrvn/lazify/internal/state"
 	"github.com/martinhrvn/lazify/internal/ui"
 )
 
@@ -23,11 +24,15 @@ const usage = `usage:
   lazify <id> [--set panel=row]...      run the app with that id from %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   --no-mouse                             leave the mouse to the terminal (text selection)
+  --no-remember                          start fresh and don't save choices (see below)
   lazify list                            list the apps in %[1]s
   lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
 
 Apps live in any *.yaml / *.yml there: one app per file (id defaults to the
 file name) or several under "apps:", each with an id.
+
+Choices in select panels (and panels with remember: true) are remembered per
+app in %[2]s/<id>.yaml; delete the file to forget them.
 `
 
 func main() {
@@ -48,7 +53,7 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		if err != nil {
 			fmt.Fprintln(stderr, "lazify:", err)
 		}
-		fmt.Fprintf(stderr, usage, cfgDir)
+		fmt.Fprintf(stderr, usage, cfgDir, state.Dir())
 		return 2
 	}
 
@@ -74,12 +79,47 @@ func run(argv []string, stdout, stderr io.Writer, cfgDir string) int {
 		// with shift+drag (or run with --no-mouse).
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
-	p := tea.NewProgram(ui.New(d, runner.Shell{}, a.set), opts...)
-	if _, err := p.Run(); err != nil {
+	m := ui.New(d, runner.Shell{}, a.set)
+	var recalled map[string]string
+	remember := d.Remembers() && !a.noRemember
+	if remember {
+		recalled = loadRemembered(d, state.Dir(), stderr)
+		m.Recall(recalled)
+	}
+	final, err := tea.NewProgram(m, opts...).Run()
+	if err != nil {
 		fmt.Fprintln(stderr, "lazify:", err)
 		return 1
 	}
+	if fm, ok := final.(ui.Model); ok && remember {
+		saveRemembered(d, state.Dir(), recalled, fm.Remembered(), stderr)
+	}
 	return 0
+}
+
+// loadRemembered reads the rows app d was on last time; a broken state file
+// is reported and ignored.
+func loadRemembered(d *def.Definition, dir string, stderr io.Writer) map[string]string {
+	m, err := state.Load(dir, d.ID)
+	if err != nil {
+		fmt.Fprintln(stderr, "lazify: can't read remembered choices:", err)
+	}
+	return m
+}
+
+// saveRemembered stores the rows app d ended on, over what was recalled: a
+// panel with no selection at quit (loading, empty) keeps its old row.
+func saveRemembered(d *def.Definition, dir string, recalled, now map[string]string, stderr io.Writer) {
+	m := map[string]string{}
+	for k, v := range recalled {
+		m[k] = v
+	}
+	for k, v := range now {
+		m[k] = v
+	}
+	if err := state.Save(dir, d.ID, m); err != nil {
+		fmt.Fprintln(stderr, "lazify: can't save remembered choices:", err)
+	}
 }
 
 // isFile reports whether arg names a definition file rather than an app id.
@@ -202,6 +242,7 @@ type args struct {
 	positional []string
 	set        map[string]string
 	noMouse    bool // leave the mouse to the terminal (plain text selection)
+	noRemember bool // neither restore nor save remembered rows
 }
 
 func parseArgs(argv []string) (args, error) {
@@ -210,6 +251,9 @@ func parseArgs(argv []string) (args, error) {
 		arg := argv[i]
 		var kv string
 		switch {
+		case arg == "--no-remember":
+			a.noRemember = true
+			continue
 		case arg == "--no-mouse":
 			a.noMouse = true
 			continue

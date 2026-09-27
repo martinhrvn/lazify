@@ -277,8 +277,9 @@ all `confirm:`; the sudo ones are `mode: interactive`. `examples/tail.yaml`,
 | `title` | no | Panel title (defaults to id). |
 | `source` | yes* | Shell command (`sh -c`). May reference other panels. (*or `values`) |
 | `values` | no | Rows written in the definition (`[eu-west-1, us-east-1]`) instead of a `source`; each is `{line: value}`. Runs no command. |
-| `select` | no | `popup` (or `true`) or `inline` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker — a dialog (`popup`) or the box itself expanding into the list (`inline`), never both (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else `default:`, else its `mark`, else the first row. |
-| `default` | no | The row a list panel starts on (a select's initial choice), matched against the row's `key`, else its label. `--set id=value` overrides it; a `mark` is used when neither is given. |
+| `select` | no | `popup` (or `true`) or `inline` makes a **select panel**: shows only its chosen row (default `size: fit`, i.e. one line); its number or Enter opens a picker — a dialog (`popup`) or the box itself expanding into the list (`inline`), never both (j/k to move, Enter to choose, Esc to cancel). Choosing re-runs whatever reads it. Initial choice: `--set id=value`, else the row from last run (selects remember by default), else `default:`, else its `mark`, else the first row. |
+| `default` | no | The row a list panel starts on (a select's initial choice), matched against the row's `key`, else its label. `--set id=value` and a remembered row override it; a `mark` is used when none matches. |
+| `remember` | no | Start on the row this panel was on last run. Selects remember by default (`remember: false` opts out); other list panels opt in with `remember: true`. Not for Enter targets. Stored per app in `$XDG_STATE_HOME/lazify/<id>.yaml` (`~/.local/state/lazify`); a row that is gone falls back to `default`, then the mark. `--no-remember` neither restores nor saves. |
 | `rows` | no | jq expression producing one JSON value per row. Absent ⇒ one row per non-empty output line: `{line}`. |
 | `split` | no | For line output: separator; adds `fields: [...]`. |
 | `label` | no | Row display template. Default: `.line` or the whole value. |
@@ -440,7 +441,8 @@ apps:
 - `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.
-- `--set panel=row` — the row a list panel starts on (overrides its `default:`).
+- `--set panel=row` — the row a list panel starts on (overrides a remembered row and `default:`).
+- `--no-remember` — start without remembered rows and don't save them.
 - `--no-mouse` — don't capture the mouse (keeps the terminal's own text selection).
 - Users get `lazyecs` via a shell alias (`alias lazyecs='lazify ecs'`); no special casing.
 
@@ -474,6 +476,6 @@ Packages, each testable on its own (TDD, same separation as paleta where the TUI
 - ~~Colours/status~~: done — `style:` lookup tables map a value to a helper (icon or spinner) and a colour; logic (e.g. running < desired) is computed as a category in `rows:` jq.
 - ~~Display helpers~~: done — a fixed set of formatters (`format: ago|duration|bytes|basename|bar`).
 - Multi-select + bulk actions?
-- Definition composition / shared selects across apps (all AWS apps share profile/region); remembering choices between runs.
+- Definition composition / shared selects across apps (all AWS apps share profile/region) (remembering choices between runs is done: `remember`).
 - ~~Name~~: decided — **lazify**.
 - paleta integration: expose `~/.config/lazify/*.yaml` as plt tools.

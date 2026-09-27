@@ -660,3 +660,11 @@ func alignRow(cells []string, widths []int) string {
 	}
 	return strings.Join(parts, "  ")
 }
+
+// Recall sets the rows to start on (panel id → row key), remembered from the
+// last run. Call it before the program starts.
+func (m Model) Recall(r map[string]string) { m.eng.Recall(r) }
+
+// Remembered returns the rows the remembering panels are on, to store for the
+// next run.
+func (m Model) Remembered() map[string]string { return m.eng.Remembered() }

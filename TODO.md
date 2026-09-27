@@ -75,7 +75,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] `values: [..]` rows without a command (any list panel); `default:`, `--set id=value`, mark as default
 - [x] `env` may reference panels; cache keyed by env + command (switching back is instant)
 - [x] `context:` / `{{ctx.x}}` report migration errors; `c` is no longer reserved
-- [ ] later: remember choices between runs; share selects across apps (all AWS apps)
+- [x] remember choices between runs: selects (and `remember: true` panels) restore their row; `--set` > remembered > `default` > mark; `~/.local/state/lazify/<id>.yaml`, `--no-remember`
+- [ ] later: share selects across apps (all AWS apps)
 
 ## Filter ✅
 - [x] `/` filters the focused list panel (or an open picker) as you type; Enter keeps, Esc clears

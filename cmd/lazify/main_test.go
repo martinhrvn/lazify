@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/martinhrvn/lazify/internal/def"
 )
 
 const validDef = "panels: [{id: a, source: echo hi}]\n"
@@ -203,5 +205,36 @@ func TestNoMouseFlag(t *testing.T) {
 	}
 	if a, _ := parseArgs([]string{"ecs"}); a.noMouse {
 		t.Error("mouse is on by default")
+	}
+}
+
+func TestNoRememberFlag(t *testing.T) {
+	a, err := parseArgs([]string{"ecs", "--no-remember"})
+	if err != nil || !a.noRemember || !reflect.DeepEqual(a.positional, []string{"ecs"}) {
+		t.Errorf("args = %+v, %v", a, err)
+	}
+}
+
+func TestRememberLoadsAndMerges(t *testing.T) {
+	dir := t.TempDir()
+	d, err := def.Parse([]byte("panels:\n  - {id: region, select: true, values: [a, b]}\n  - {id: clusters, source: c, remember: true}"), "ecs.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	recall := loadRemembered(d, dir, &errOut)
+	if len(recall) != 0 || errOut.Len() != 0 {
+		t.Fatalf("first run: %v %q", recall, errOut.String())
+	}
+	saveRemembered(d, dir, recall, map[string]string{"region": "b", "clusters": "web"}, &errOut)
+	// Next run: clusters had no selection at quit (still loading) — keep web.
+	recall = loadRemembered(d, dir, &errOut)
+	saveRemembered(d, dir, recall, map[string]string{"region": "a"}, &errOut)
+	if got := loadRemembered(d, dir, &errOut); !reflect.DeepEqual(got, map[string]string{"region": "a", "clusters": "web"}) {
+		t.Errorf("remembered = %v", got)
+	}
+	os.WriteFile(filepath.Join(dir, d.ID+".yaml"), []byte("[broken"), 0o644)
+	if got := loadRemembered(d, dir, &errOut); len(got) != 0 || !strings.Contains(errOut.String(), "lazify: can't read remembered choices") {
+		t.Errorf("corrupt state: %v, %q", got, errOut.String())
 	}
 }

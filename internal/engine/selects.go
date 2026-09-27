@@ -140,25 +140,34 @@ func (e *Engine) initialChoice(ps *panelState) {
 	if ps.jumped || ps.moved || len(ps.rows) == 0 {
 		return
 	}
-	want, ok := e.set[ps.def.ID]
-	if !ok {
-		want = ps.def.Default
+	// --set, then last run's row, then the definition's default; else the mark.
+	var wants []string
+	if want, ok := e.set[ps.def.ID]; ok {
+		wants = append(wants, want)
 	}
-	if want == "" {
-		e.jumpToMark(ps)
-		return
+	if want, ok := e.recall[ps.def.ID]; ok {
+		wants = append(wants, want)
 	}
-	ps.jumped = true
-	for i := range ps.rows {
-		k, _ := e.rowKey(ps, i)
-		if k == want || e.rowLabel(ps, i) == want {
-			if i != ps.cursor {
-				ps.cursor = i
-				e.propagate(ps.def.ID, true)
+	if ps.def.Default != "" {
+		wants = append(wants, ps.def.Default)
+	}
+	for _, want := range wants {
+		for i := range ps.rows {
+			if k, _ := e.rowKey(ps, i); k == want || e.rowLabel(ps, i) == want {
+				ps.jumped = true
+				if i != ps.cursor {
+					ps.cursor = i
+					e.propagate(ps.def.ID, true)
+				}
+				return
 			}
-			return
 		}
 	}
+	if ps.def.Mark == nil {
+		ps.jumped = true // nothing matched and nothing else to wait for
+		return
+	}
+	e.jumpToMark(ps)
 }
 
 // rowLabel is row i as displayed (label, or its columns joined).

@@ -88,6 +88,7 @@ type panelState struct {
 type Engine struct {
 	def    *def.Definition
 	set    map[string]string // initial select choices (--set)
+	recall map[string]string // rows remembered from the last run (Recall)
 	panels map[string]*panelState
 	// cache maps a rendered command to its rows. The env is fixed for the
 	// engine's lifetime, so the command alone is the key.
