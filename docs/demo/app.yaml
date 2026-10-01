@@ -1,0 +1,17 @@
+name: tiny-git
+panels:
+  - id: branches
+    title: Branches
+    source: git branch --format='%(refname:short)'
+  - id: commits
+    title: Commits
+    source: git log --format='%h%x09%s%x09%ct' {{branches.line}}
+    split: "\t"
+    columns:
+      - {title: Commit, value: "{{.fields.0}}", style: {"*": accent}}
+      - {title: Subject, value: "{{.fields.1}}"}
+      - {title: Age, value: "{{.fields.2}}", format: ago, style: {"*": dim}}
+  - id: main
+    content:
+      branches: {tabs: [{name: Log, cmd: "git log --oneline --graph --color=always {{.line}}"}]}
+      commits: {tabs: [{name: Diff, cmd: "git show --color=always {{.fields.0}}"}]}

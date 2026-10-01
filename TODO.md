@@ -120,3 +120,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] by the value before formatting: numbers, times, natural text; cursor kept, refreshes keep the order
 - [ ] later: a default `sort:` in the definition; remember the sort between runs
 - [x] unfocused lists show their selected row (quiet background); the focused one keeps the reversed cursor
+
+## Nix ✅
+- [x] flake: `packages` (full `go test` in the build), `apps`, `overlays.default`, `checks`, `formatter`
+- [x] Home Manager module `programs.lazify`: `apps.<id>` as a path, YAML text or an attrset → `~/.config/lazify/<id>.yaml`; `lazify lint` at build time (`validate`)
+- [ ] later: CI running `nix flake check`; NixOS module (system-wide package only)

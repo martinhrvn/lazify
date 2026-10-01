@@ -16,6 +16,30 @@ lazify git          # run by id
 lazify lint         # check every app
 ```
 
+### Nix
+
+`nix run github:martinhrvn/lazify -- list`, or declare apps with the Home Manager module:
+
+```nix
+# flake inputs: lazify.url = "github:martinhrvn/lazify";
+imports = [ inputs.lazify.homeManagerModules.default ];
+programs.lazify = {
+  enable = true;
+  apps = {
+    git = ./git-lite.yaml;                         # a YAML file
+    tail = ''
+      panels:
+        - id: files
+          source: find . -name '*.log'
+    '';                                            # YAML text
+    disk.panels = [ { id = "mounts"; source = "df -h"; } ];  # Nix, rendered as YAML
+  };
+};
+```
+
+Each app becomes `~/.config/lazify/<name>.yaml` (id = the name) and is checked with
+`lazify lint` at build time, so a broken app fails `home-manager switch` (`validate = false` to skip).
+
 Examples: `examples/git-lite.yaml` (git), `examples/ecs.yaml` (AWS ECS, read-only),
 `examples/nix.yaml` (NixOS generations, closures, flake inputs; `lazify examples/nix.yaml`).
 `examples/dev/`: a project dashboard over process-compose — copy its `.lazify.yaml` into a
