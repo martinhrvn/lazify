@@ -22,9 +22,10 @@ buildGoModule {
   subPackages = [ "cmd/lazify" ];
 
   # subPackages would limit the tests to cmd/lazify; run the whole suite.
+  # -short skips the wall-clock perf tests, which flake on a loaded builder.
   checkPhase = ''
     runHook preCheck
-    go test ./...
+    go test -short ./...
     runHook postCheck
   '';
 
