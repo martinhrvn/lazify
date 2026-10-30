@@ -484,6 +484,12 @@ there is scanned. A file holds one app (`id` defaults to the file name) or sever
 and defaults to the id. A broken app never blocks the others; duplicate ids are reported
 when used and by `lint`.
 
+An `apps:` entry can instead be **`import: <file>`**: that file's apps (one, or several under
+`apps:`) take its place. The path is relative to the importing file (or absolute, or `~/…`);
+imports nest, and a cycle or a missing file is an error at the `import:` line that hides only
+that entry. Imported apps keep their own `file:line` in errors and `list`. Subdirectories of the
+config dir are not scanned, so `shared/` there can hold files meant only for importing.
+
 ```yaml
 # ~/.config/lazify/config.yaml
 apps:
@@ -492,12 +498,15 @@ apps:
   - id: git
     name: git-lite
     panels: [...]
+  - import: shared/k8s.yaml      # its apps, id = k8s for a single-app file
 ```
 
-- `lazify <id>` → run the app with that id; `lazify <file.yaml> [id]` → run from a file.
+- `lazify <id>` → run the app with that id — the project's (see below) first, run from the project, else
+  the config dir's; `lazify <file.yaml> [id]` → run from a file.
 - `lazify` (no arguments) → the **project's own app**: the nearest `.lazify.yaml` (or `.yml`) in the current
   directory or a parent, run from that directory; its app is named after the directory unless it has an
-  `id`. `list` and `lint` include it.
+  `id`. It may hold several apps (`apps:`, imports): then plain `lazify` lists them and `lazify <id>`
+  picks one. `list` and `lint` include them; a config-dir app with the same id is listed as hidden.
 - `lazify list` → id, name and file of every app, with invalid/duplicate ones marked.
 - `lazify lint [id|file]...` → validate (refs, cycles, reserved keys, jq compiles); without
   arguments, everything in the config folder.

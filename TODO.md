@@ -59,6 +59,8 @@ See `docs/design.md` §11 for milestone scope.
 - [x] a broken app or file never blocks the others; `file:line` errors inside `apps:`
 - [ ] later: global settings in config.yaml (theme, default layout, key overrides)
 - [x] project-local definitions: plain `lazify` runs the nearest `.lazify.yaml` from its directory (id = directory name)
+- [x] `import: <file>` entries in `apps:` (relative, nested, cycles reported); multi-app projects, `lazify <id>` checks the project first
+- [ ] later: globs in `import:`
 
 ## Enter on a row — popup or drill-down ✅
 - [x] `enter: <panel>` drills down in the same slot; `enter: {panel, popup: true|full|{width, height}}` opens a popup

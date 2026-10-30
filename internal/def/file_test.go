@@ -143,3 +143,46 @@ func TestProjectFileID(t *testing.T) {
 		t.Errorf("an explicit id wins: %q", apps[0].ID)
 	}
 }
+
+// An apps: entry can import another file; ParseFile only records it.
+func TestImportEntry(t *testing.T) {
+	src := "apps:\n  - import: lazify/ci.yaml\n  - id: db\n    panels: [{id: p, source: x}]\n"
+	apps, err := ParseFile([]byte(src), "/p/shop/.lazify.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) != 2 {
+		t.Fatalf("apps = %+v", apps)
+	}
+	if a := apps[0]; a.Import != "lazify/ci.yaml" || a.Line != 2 || a.File != "/p/shop/.lazify.yaml" || a.Def != nil || a.Err != nil {
+		t.Errorf("import entry = %+v", a)
+	}
+	if a := apps[1]; a.ID != "db" || a.Import != "" || a.File != "/p/shop/.lazify.yaml" || a.Def == nil {
+		t.Errorf("app = %+v", a)
+	}
+}
+
+func TestImportEntryErrors(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{"with fields", "apps:\n  - import: x.yaml\n    id: a\n", "config.yaml:2: apps: import: can't be combined with an app's fields"},
+		{"empty", "apps:\n  - import: ''\n", "config.yaml:2: apps: import: path is required"},
+		{"top level", "import: x.yaml\npanels: [{id: p, source: x}]\n", `config.yaml:1: unknown field "import" in definition`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apps, err := ParseFile([]byte(tt.src), "config.yaml")
+			var msgs []string
+			if err != nil {
+				msgs = append(msgs, err.Error())
+			}
+			for _, a := range apps {
+				if a.Err != nil {
+					msgs = append(msgs, a.Err.Error())
+				}
+			}
+			if got := strings.Join(msgs, "\n"); !strings.Contains(got, tt.want) {
+				t.Errorf("errors %q\ndo not contain %q", got, tt.want)
+			}
+		})
+	}
+}

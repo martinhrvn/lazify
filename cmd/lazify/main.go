@@ -22,16 +22,17 @@ import (
 
 const usage = `usage:
   lazify                                 run the project's .lazify.yaml (here or in a parent dir)
-  lazify <id> [--set panel=row]...      run the app with that id from %[1]s
+  lazify <id> [--set panel=row]...      run the app with that id from the project's .lazify.yaml, else %[1]s
   lazify <file.yaml> [id] [--set ...]    run an app from a file (id picks one of several)
   --no-mouse                             leave the mouse to the terminal (text selection)
   --no-remember                          start fresh and don't save choices (see below)
   --no-float                             interactive actions take over the terminal (not a tmux/zellij float)
-  lazify list                            list the apps in %[1]s
-  lazify lint [id|file.yaml]...          validate apps (default: everything in %[1]s)
+  lazify list                            list the project's apps and those in %[1]s
+  lazify lint [id|file.yaml]...          validate apps (default: the project's and everything in %[1]s)
 
 Apps live in any *.yaml / *.yml there: one app per file (id defaults to the
-file name) or several under "apps:", each with an id.
+file name) or several under "apps:", each with an id. An "apps:" entry
+"- import: other.yaml" (relative to the file) adds that file's apps.
 
 Choices in select panels (and panels with remember: true) are remembered per
 app in %[2]s/<id>.yaml; delete the file to forget them.
@@ -164,11 +165,7 @@ func pick(args []string, cfgDir string) (*def.Definition, error) {
 		return catalog.Scan(cfgDir).Find(args[0])
 	}
 	file := args[0]
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-	apps, err := def.ParseFile(data, file)
+	apps, err := def.LoadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +218,7 @@ func lint(targets []string, stdout, stderr io.Writer, cfgDir, cwd string) int {
 			report(t, err)
 			continue
 		}
-		data, err := os.ReadFile(t)
-		if err != nil {
-			report(t, err)
-			continue
-		}
-		apps, err := def.ParseFile(data, t)
+		apps, err := def.LoadFile(t)
 		if err != nil {
 			report(t, err)
 		}
@@ -237,49 +229,59 @@ func lint(targets []string, stdout, stderr io.Writer, cfgDir, cwd string) int {
 	return code
 }
 
-// list prints the catalog as a table.
 // list prints the apps in the config dir and the project's (cwd or above).
 func list(stdout io.Writer, cfgDir, cwd string) int {
 	c := catalog.Scan(cfgDir)
-	project, hasProject := catalog.FindProject(cwd)
-	if len(c.Entries()) == 0 && !hasProject {
+	project := projectCatalog(cwd)
+	if len(c.Entries()) == 0 && project == nil {
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tNAME\tFILE\t")
-	if hasProject { // plain `lazify` runs it
-		loc := project
-		if rel, err := filepath.Rel(cwd, project); err == nil {
-			loc = rel
-		}
-		data, err := os.ReadFile(project)
-		apps, perr := def.ParseFile(data, project)
-		for _, app := range apps {
-			status := "project"
-			if app.Err != nil || err != nil || perr != nil {
-				status = "project, invalid (lazify lint)"
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%s:%d\t%s\n", app.ID, app.Name, loc, app.Line, status)
+	if project != nil { // plain `lazify` or `lazify <id>` runs these
+		for _, e := range project.Entries() {
+			listEntry(tw, project, e, cwd, "project")
 		}
 	}
 	for _, e := range c.Entries() {
 		status := ""
-		switch {
-		case e.Err != nil:
-			status = "invalid (lazify lint)"
-		case c.Duplicate(e.ID):
-			status = "duplicate id"
+		if project != nil && project.Has(e.ID) {
+			status = "hidden by project"
 		}
-		loc := e.Location()
-		if rel, err := filepath.Rel(cfgDir, e.File); err == nil {
-			loc = fmt.Sprintf("%s:%d", rel, e.Line)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID, e.Name, loc, status)
+		listEntry(tw, c, e, cfgDir, status)
 	}
 	if err := tw.Flush(); err != nil {
 		return 1
 	}
 	return 0
+}
+
+// listEntry prints one row of `list`, its file relative to base.
+func listEntry(w io.Writer, c *catalog.Catalog, e catalog.Entry, base, status string) {
+	notes := []string{}
+	if status != "" {
+		notes = append(notes, status)
+	}
+	switch {
+	case e.Err != nil:
+		notes = append(notes, "invalid (lazify lint)")
+	case c.Duplicate(e.ID):
+		notes = append(notes, "duplicate id")
+	}
+	loc := e.Location()
+	if rel, err := filepath.Rel(base, e.File); err == nil {
+		loc = fmt.Sprintf("%s:%d", rel, e.Line)
+	}
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.ID, e.Name, loc, strings.Join(notes, ", "))
+}
+
+// projectCatalog holds the apps of the project's .lazify.yaml (in cwd or
+// above), or is nil outside a project.
+func projectCatalog(cwd string) *catalog.Catalog {
+	if file, ok := catalog.FindProject(cwd); ok {
+		return catalog.ScanFile(file)
+	}
+	return nil
 }
 
 type args struct {
@@ -347,18 +349,35 @@ func checkSet(d *def.Definition, set map[string]string) error {
 // errNoApp: nothing to run — no arguments and no project definition here.
 var errNoApp = errors.New("no app given and no .lazify.yaml here or above")
 
-// resolve finds the app to run: by id or file, or with no arguments the
-// project's .lazify.yaml in cwd or above. dir is where it should run: the
-// project's directory, "" for the current one.
+// resolve finds the app to run: by id (the project's apps first, then the
+// config dir's) or file, or with no arguments the app of the project's
+// .lazify.yaml in cwd or above. dir is where it should run: the project's
+// directory, "" for the current one.
 func resolve(args []string, cfgDir, cwd string) (d *def.Definition, dir string, err error) {
+	file, inProject := catalog.FindProject(cwd)
+	if inProject && len(args) == 1 && !isFile(args[0]) {
+		if p := catalog.ScanFile(file); p.Has(args[0]) {
+			d, err = p.Find(args[0])
+			return d, filepath.Dir(file), err
+		}
+	}
 	if len(args) > 0 {
 		d, err = pick(args, cfgDir)
 		return d, "", err
 	}
-	file, ok := catalog.FindProject(cwd)
-	if !ok {
+	if !inProject {
 		return nil, "", errNoApp
 	}
-	d, err = pick([]string{file}, cfgDir)
-	return d, filepath.Dir(file), err
+	apps, err := def.LoadFile(file)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(apps) == 1 {
+		return apps[0].Def, filepath.Dir(file), apps[0].Err
+	}
+	ids := make([]string, len(apps))
+	for i, a := range apps {
+		ids[i] = a.ID
+	}
+	return nil, "", fmt.Errorf("%s defines apps: %s; run `lazify <id>`", file, strings.Join(ids, ", "))
 }

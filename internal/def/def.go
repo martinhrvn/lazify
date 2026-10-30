@@ -318,7 +318,7 @@ var yamlLineRe = regexp.MustCompile(`^(?:yaml: )?line (\d+): (.*)$`)
 var unknownFieldRe = regexp.MustCompile(`^field (\S+) not found in type def\.raw(\w+)$`)
 
 var rawTypeNames = map[string]string{
-	"Def": "definition", "File": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
+	"Def": "definition", "File": "definition", "AppEntry": "definition", "Ctx": "context", "Panel": "panel", "Column": "column",
 	"Content": "content", "Tab": "tab", "Action": "action", "Layout": "layout",
 }
 

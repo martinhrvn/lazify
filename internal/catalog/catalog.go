@@ -1,6 +1,7 @@
 // Package catalog finds apps by id across the definition files in a config
 // directory (~/.config/lazify): every *.yaml / *.yml file there holds one app
-// or several under `apps:`.
+// or several under `apps:`, which may import other files (def.LoadFile).
+// Subdirectories are not scanned, so they can hold files meant for importing.
 package catalog
 
 import (
@@ -26,9 +27,9 @@ type Entry struct {
 // Location is where the entry is defined, as file:line.
 func (e Entry) Location() string { return fmt.Sprintf("%s:%d", e.File, e.Line) }
 
-// Catalog is the result of scanning a directory.
+// Catalog is the result of scanning a directory (or a single file).
 type Catalog struct {
-	Dir      string
+	Dir      string // what was scanned
 	entries  []Entry
 	fileErrs []error // files that could not be read or parsed as a whole
 }
@@ -48,23 +49,33 @@ func Scan(dir string) *Catalog {
 		if f.IsDir() || (ext != ".yaml" && ext != ".yml") {
 			continue
 		}
-		path := filepath.Join(dir, f.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			c.fileErrs = append(c.fileErrs, err)
-			continue
-		}
-		apps, err := def.ParseFile(data, path)
-		if err != nil {
-			c.fileErrs = append(c.fileErrs, err)
-		}
-		for _, a := range apps {
-			c.entries = append(c.entries, Entry{ID: a.ID, Name: a.Name, File: path, Line: a.Line, Def: a.Def, Err: a.Err})
-		}
+		c.add(filepath.Join(dir, f.Name()))
 	}
 	sort.SliceStable(c.entries, func(i, j int) bool { return c.entries[i].ID < c.entries[j].ID })
 	return c
 }
+
+// ScanFile reads the apps of a single file (a project's .lazify.yaml) and the
+// files it imports.
+func ScanFile(path string) *Catalog {
+	c := &Catalog{Dir: path}
+	c.add(path)
+	sort.SliceStable(c.entries, func(i, j int) bool { return c.entries[i].ID < c.entries[j].ID })
+	return c
+}
+
+func (c *Catalog) add(path string) {
+	apps, err := def.LoadFile(path)
+	if err != nil {
+		c.fileErrs = append(c.fileErrs, err)
+	}
+	for _, a := range apps {
+		c.entries = append(c.entries, Entry{ID: a.ID, Name: a.Name, File: a.File, Line: a.Line, Def: a.Def, Err: a.Err})
+	}
+}
+
+// Has reports whether some app uses id.
+func (c *Catalog) Has(id string) bool { return len(c.matches(id)) > 0 }
 
 // Entries lists every app, sorted by id.
 func (c *Catalog) Entries() []Entry { return c.entries }

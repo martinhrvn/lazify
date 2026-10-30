@@ -12,13 +12,16 @@ import (
 )
 
 // App is one app found in a file: either the whole file, or an entry of its
-// `apps:` list.
+// `apps:` list. An `import:` entry has only File, Line and Import set until
+// LoadFile replaces it with the imported file's apps.
 type App struct {
-	ID   string
-	Name string
-	Line int         // where the app starts in the file
-	Def  *Definition // nil when Err is set
-	Err  error       // this app's validation errors (Errors)
+	ID     string
+	Name   string
+	File   string      // the file the app is defined in
+	Line   int         // where the app starts in the file
+	Def    *Definition // nil when Err is set
+	Err    error       // this app's validation errors (Errors)
+	Import string      // the file this entry imports, as written
 }
 
 // ProjectFiles are the names of a project's own definition, found by running
@@ -29,7 +32,13 @@ var ProjectFiles = []string{".lazify.yaml", ".lazify.yml"}
 // rawFile is a file with one app at the top level, or several under apps.
 type rawFile struct {
 	rawDef `yaml:",inline"`
-	Apps   []rawDef `yaml:"apps"`
+	Apps   []rawAppEntry `yaml:"apps"`
+}
+
+// rawAppEntry is an app, or `import: path` pulling in another file's apps.
+type rawAppEntry struct {
+	rawDef `yaml:",inline"`
+	Import string `yaml:"import"`
 }
 
 // ParseFile parses every app in a file. The returned error is for problems
@@ -84,7 +93,11 @@ func ParseFile(data []byte, file string) ([]App, error) {
 				own = append(own, e)
 			}
 		}
-		apps = append(apps, buildApp(file, node, &rd, own, ""))
+		if mapValue(node, "import") != nil {
+			apps = append(apps, importEntry(file, node, rd.Import, own))
+			continue
+		}
+		apps = append(apps, buildApp(file, node, &rd.rawDef, own, ""))
 	}
 	for _, e := range typeErrs {
 		if len(appsNode.Content) == 0 || e.Line < appsNode.Content[0].Line {
@@ -97,11 +110,26 @@ func ParseFile(data []byte, file string) ([]App, error) {
 	return apps, nil
 }
 
+// importEntry is an `import:` entry of apps:, which must stand alone.
+func importEntry(file string, node *yaml.Node, path string, errs Errors) App {
+	app := App{File: file, Line: node.Line, Import: path}
+	switch {
+	case len(mapKeysOf(node)) > 1:
+		errs = append(errs, Error{File: file, Line: node.Line, Msg: "apps: import: can't be combined with an app's fields"})
+	case path == "":
+		errs = append(errs, Error{File: file, Line: node.Line, Msg: "apps: import: path is required"})
+	}
+	if len(errs) > 0 {
+		app.ID, app.Import, app.Err = "import "+path, "", errs
+	}
+	return app
+}
+
 // buildApp validates one app rooted at node. defaultID is used when the app
 // has no id (single-app files); "" makes the id required.
 func buildApp(file string, node *yaml.Node, raw *rawDef, typeErrs Errors, defaultID string) App {
 	v := &validator{file: file, root: node, errs: typeErrs}
-	app := App{ID: raw.ID, Line: node.Line}
+	app := App{ID: raw.ID, File: file, Line: node.Line}
 	switch {
 	case app.ID == "" && defaultID == "":
 		v.errorf(node.Line, "app: id is required")

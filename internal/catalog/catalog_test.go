@@ -135,3 +135,39 @@ func TestFindProject(t *testing.T) {
 		t.Errorf("the nearest one wins: %q", got)
 	}
 }
+
+// Files in subdirectories aren't scanned, but can be imported; the imported
+// app is listed where it is defined.
+func TestImportedApps(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "shared"), 0o755)
+	write(t, dir, "config.yaml", "apps:\n  - import: shared/k8s.yaml\n")
+	write(t, filepath.Join(dir, "shared"), "k8s.yaml", "\npanels: [{id: p, source: kubectl}]")
+	c := Scan(dir)
+	if probs := c.Problems(); len(probs) > 0 {
+		t.Fatalf("problems: %v", probs)
+	}
+	d, err := c.Find("k8s")
+	if err != nil || d.ID != "k8s" {
+		t.Fatalf("Find(k8s) = %v, %v", d, err)
+	}
+	if es := c.Entries(); len(es) != 1 || es[0].Location() != filepath.Join(dir, "shared", "k8s.yaml")+":2" {
+		t.Errorf("entries = %+v", es)
+	}
+}
+
+func TestScanFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "a.yaml", "apps:\n  - import: b.yaml\n  - import: b.yaml\n  - id: x\n    panels: [{id: p, source: x}]\n")
+	write(t, dir, "b.yaml", "panels: [{id: p, source: x}]")
+	c := ScanFile(filepath.Join(dir, "a.yaml"))
+	if !c.Has("x") || c.Has("nope") {
+		t.Errorf("Has: x=%v nope=%v", c.Has("x"), c.Has("nope"))
+	}
+	if d, err := c.Find("x"); err != nil || d.ID != "x" {
+		t.Errorf("Find(x) = %v, %v", d, err)
+	}
+	if _, err := c.Find("b"); err == nil || !strings.Contains(err.Error(), "defined more than once") {
+		t.Errorf("Find(b) = %v", err)
+	}
+}

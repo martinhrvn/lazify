@@ -43,7 +43,8 @@ Each app becomes `~/.config/lazify/<name>.yaml` (id = the name) and is checked w
 Examples: `examples/git-lite.yaml` (git), `examples/ecs.yaml` (AWS ECS, read-only),
 `examples/nix.yaml` (NixOS generations, closures, flake inputs; `lazify examples/nix.yaml`).
 `examples/dev/`: a project dashboard over process-compose — copy its `.lazify.yaml` into a
-project with a `process-compose.yaml` and run plain `lazify` there.
+project with a `process-compose.yaml` and run plain `lazify` there. A project file can hold several
+apps (`apps:`), including other files' (`- import: lazify/ci.yaml`); run one with `lazify <id>`.
 
 Choices (profile, region, flake, …) are remembered per app in `~/.local/state/lazify/<id>.yaml`;
 `--no-remember` starts fresh.

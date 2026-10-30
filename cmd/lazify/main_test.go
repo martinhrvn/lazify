@@ -299,3 +299,69 @@ func TestListAndLintIncludeProject(t *testing.T) {
 		t.Errorf("lint: %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
+
+// multiProject is a project whose .lazify.yaml holds several apps, one of them
+// imported from lazify/web.yaml.
+func multiProject(t *testing.T) (root, sub string) {
+	t.Helper()
+	root, sub = projectDir(t)
+	if err := os.Mkdir(filepath.Join(root, "lazify"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDef(t, root, ".lazify.yaml", "apps:\n  - id: db\n    panels: [{id: a, source: x}]\n  - import: lazify/web.yaml\n")
+	writeDef(t, filepath.Join(root, "lazify"), "web.yaml", validDef)
+	return root, sub
+}
+
+// `lazify <id>` looks in the project first (its apps win over the config
+// dir's) and runs a project app from the project.
+func TestResolveProjectAppByID(t *testing.T) {
+	root, sub := multiProject(t)
+	cfg := t.TempDir()
+	writeDef(t, cfg, "web.yaml", validDef)
+	writeDef(t, cfg, "git.yaml", validDef)
+
+	d, dir, err := resolve([]string{"web"}, cfg, sub)
+	if err != nil || d.ID != "web" || dir != root || d.File != filepath.Join(root, "lazify", "web.yaml") {
+		t.Errorf("web = %v, %q, %v", d, dir, err)
+	}
+	if d, dir, err := resolve([]string{"db"}, cfg, sub); err != nil || d.ID != "db" || dir != root {
+		t.Errorf("db = %v, %q, %v", d, dir, err)
+	}
+	if d, dir, err := resolve([]string{"git"}, cfg, sub); err != nil || d.ID != "git" || dir != "" {
+		t.Errorf("git (config dir) = %v, %q, %v", d, dir, err)
+	}
+	_, _, err = resolve(nil, cfg, sub)
+	if err == nil || !strings.Contains(err.Error(), "defines apps: db, web; run `lazify <id>`") {
+		t.Errorf("plain lazify with several apps: %v", err)
+	}
+}
+
+func TestPickImportedApp(t *testing.T) {
+	root, _ := multiProject(t)
+	d, err := pick([]string{filepath.Join(root, ".lazify.yaml"), "web"}, t.TempDir())
+	if err != nil || d.ID != "web" {
+		t.Errorf("pick = %v, %v", d, err)
+	}
+}
+
+func TestListAndLintProjectImports(t *testing.T) {
+	_, sub := multiProject(t)
+	t.Chdir(sub)
+	cfg := t.TempDir()
+	writeDef(t, cfg, "web.yaml", validDef)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"list"}, &out, &errOut, cfg); code != 0 {
+		t.Fatalf("list: %d %s", code, errOut.String())
+	}
+	if want := filepath.Join("..", "..", "lazify", "web.yaml") + ":1"; !strings.Contains(out.String(), want) {
+		t.Errorf("list shows where web is defined (%s):\n%s", want, out.String())
+	}
+	if !strings.Contains(out.String(), "hidden by project") {
+		t.Errorf("the config dir's web is hidden by the project's:\n%s", out.String())
+	}
+	out.Reset()
+	if code := run([]string{"lint"}, &out, &errOut, t.TempDir()); code != 0 || !strings.Contains(out.String(), "web: ok") {
+		t.Errorf("lint: %d\n%s%s", code, out.String(), errOut.String())
+	}
+}
